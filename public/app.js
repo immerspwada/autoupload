@@ -1,183 +1,119 @@
-// YouTube Auto Uploader v2 - Advanced Frontend with WebSocket & Dashboard
-let dropQueue = [];
+// ═══════════════════════════════════════════════════════════════
+// YouTube Auto Uploader v2 — SPA Router (URL Path-based)
+//
+// แต่ละ tab = แต่ละ URL path = แต่ละไฟล์ใน /pages/*.js
+// ═══════════════════════════════════════════════════════════════
+
+const ROUTES = {
+  '/':          () => import('./pages/dashboard.js'),
+  '/dashboard': () => import('./pages/dashboard.js'),
+  '/upload':    () => import('./pages/upload.js'),
+  '/tiktok':    () => import('./pages/tiktok.js'),
+  '/files':     () => import('./pages/files.js'),
+  '/queue':     () => import('./pages/queue.js'),
+  '/scheduler': () => import('./pages/scheduler.js'),
+  '/settings':  () => import('./pages/settings.js'),
+  '/history':   () => import('./pages/history.js'),
+};
+
 let ws = null;
 let wsReconnectTimer = null;
+let currentPage = null;
 
+// ==================== INIT ====================
 document.addEventListener('DOMContentLoaded', () => {
   initWebSocket();
-  initTabs();
-  initDropZone();
+  initNav();
   checkAuth();
-  loadSettings();
-  loadDashboard();
-  initScheduler();
-  initQueueControls();
+  loadHealthStatus();
+  navigate(location.hash.slice(1) || '/');
+
+  // Auth callback params
+  const params = new URLSearchParams(location.search);
+  if (params.get('auth') === 'success') { showToast('เชื่อมต่อ YouTube สำเร็จ!', 'success'); history.replaceState({}, '', '/'); }
+  else if (params.get('auth') === 'error') { showToast('เชื่อมต่อล้มเหลว: ' + (params.get('message')||''), 'error'); history.replaceState({}, '', '/'); }
+
+  setInterval(loadHealthStatus, 30000);
 });
+
+// ==================== ROUTER ====================
+function initNav() {
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      e.preventDefault();
+      const path = tab.dataset.path;
+      navigate(path);
+    });
+  });
+
+  window.addEventListener('hashchange', () => {
+    navigate(location.hash.slice(1) || '/');
+  });
+}
+
+async function navigate(path) {
+  if (!path || !ROUTES[path]) path = '/';
+
+  // Update URL hash
+  if (location.hash !== '#' + path) {
+    history.pushState(null, '', '#' + path);
+  }
+
+  // Update active tab
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.path === path);
+  });
+
+  // Load page module
+  const container = document.getElementById('page-content');
+  try {
+    const module = await ROUTES[path]();
+    container.innerHTML = module.render();
+    currentPage = module;
+    if (module.init) await module.init();
+  } catch (err) {
+    container.innerHTML = `<p class="empty-state">❌ โหลดหน้าล้มเหลว: ${err.message}</p>`;
+    console.error('Navigation error:', err);
+  }
+}
 
 // ==================== WEBSOCKET ====================
 function initWebSocket() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${location.host}/ws`);
-
-  ws.onopen = () => {
-    console.log('WebSocket connected');
-    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-  };
-
-  ws.onmessage = (event) => {
-    const { type, data } = JSON.parse(event.data);
-    handleWSMessage(type, data);
-  };
-
-  ws.onclose = () => {
-    console.log('WebSocket disconnected, reconnecting...');
-    wsReconnectTimer = setTimeout(initWebSocket, 3000);
-  };
-
+  ws.onopen = () => { updateConnectionDot(true); if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; } };
+  ws.onmessage = (e) => handleWS(JSON.parse(e.data));
+  ws.onclose = () => { updateConnectionDot(false); wsReconnectTimer = setTimeout(initWebSocket, 3000); };
   ws.onerror = () => ws.close();
 }
 
-function handleWSMessage(type, data) {
+function handleWS({ type, data }) {
   switch (type) {
-    case 'init':
-      updateQueueUI(data.queue);
+    case 'notification':
+      showToast(`${data.title}: ${data.message}`, data.level === 'error' ? 'error' : data.level === 'success' ? 'success' : 'info');
+      if (data.level === 'error' || data.level === 'success') sendDesktopNotif(data.title, data.message);
       break;
     case 'queue:progress':
-      updateQueueUI(data);
+      if (currentPage && currentPage.update) currentPage.update(data);
       break;
     case 'queue:completed':
-      showToast(`✅ อัปโหลดสำเร็จ: ${data.filename}`, 'success');
-      loadDashboard();
-      loadFiles();
+      showToast(`✅ ${data.filename}`, 'success');
       break;
     case 'queue:failed':
-      showToast(`❌ อัปโหลดล้มเหลว: ${data.filename}`, 'error');
-      break;
-    case 'queue:retry':
-      showToast(`🔄 ลองใหม่ครั้งที่ ${data.attempt}: ${data.filename}`, 'info');
+      showToast(`❌ ${data.filename}`, 'error');
       break;
     case 'queue:done':
-      showToast('🎉 อัปโหลดคิวเสร็จสิ้น!', 'success');
-      loadDashboard();
-      loadHistory();
+      showToast('🎉 คิวเสร็จสิ้น!', 'success');
+      break;
+    case 'dashboard:refresh':
+      if (currentPage && location.hash === '#/' || location.hash === '#/dashboard') {
+        if (currentPage.init) currentPage.init();
+      }
+      break;
+    case 'system:status':
+      updateStatusBar(data);
       break;
   }
-}
-
-// ==================== TAB NAVIGATION ====================
-function initTabs() {
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      tab.classList.add('active');
-      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-
-      if (tab.dataset.tab === 'files') loadFiles();
-      if (tab.dataset.tab === 'history') loadHistory();
-      if (tab.dataset.tab === 'dashboard') loadDashboard();
-      if (tab.dataset.tab === 'queue') loadQueueTab();
-    });
-  });
-
-  // Check URL params for auth callback
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('auth') === 'success') {
-    showToast('เชื่อมต่อ YouTube สำเร็จ!', 'success');
-    window.history.replaceState({}, '', '/');
-  } else if (params.get('auth') === 'error') {
-    showToast('เชื่อมต่อ YouTube ล้มเหลว: ' + (params.get('message') || ''), 'error');
-    window.history.replaceState({}, '', '/');
-  }
-}
-
-// ==================== DASHBOARD ====================
-async function loadDashboard() {
-  try {
-    const res = await fetch('/api/stats/dashboard');
-    const data = await res.json();
-
-    document.getElementById('stat-total-uploads').textContent = data.overview.totalUploads;
-    document.getElementById('stat-total-size').textContent = data.overview.totalSizeFormatted;
-    document.getElementById('stat-success-rate').textContent = data.overview.successRate + '%';
-    document.getElementById('stat-today').textContent = data.today.uploads || 0;
-
-    renderChart7Days(data.last7Days);
-    renderChartHours(data.uploadsByHour);
-    renderDashboardQueue(data.queue);
-    renderDashboardRecent(data.recentUploads);
-  } catch (err) {
-    console.error('Dashboard load error:', err);
-  }
-}
-
-function renderChart7Days(days) {
-  const container = document.getElementById('chart-7days');
-  if (!days || days.length === 0) {
-    container.innerHTML = '<p class="empty-state">ยังไม่มีข้อมูล</p>';
-    return;
-  }
-  const max = Math.max(...days.map(d => d.uploads), 1);
-  container.innerHTML = `<div class="bar-chart">
-    ${days.map(d => {
-      const height = Math.max((d.uploads / max) * 100, 4);
-      const label = d.date.slice(5); // MM-DD
-      return `<div class="bar-item">
-        <div class="bar-value">${d.uploads}</div>
-        <div class="bar" style="height:${height}%"></div>
-        <div class="bar-label">${label}</div>
-      </div>`;
-    }).join('')}
-  </div>`;
-}
-
-function renderChartHours(hourData) {
-  const container = document.getElementById('chart-hours');
-  if (!hourData || Object.keys(hourData).length === 0) {
-    container.innerHTML = '<p class="empty-state">ยังไม่มีข้อมูล</p>';
-    return;
-  }
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-  const max = Math.max(...hours.map(h => hourData[h] || 0), 1);
-  container.innerHTML = `<div class="bar-chart bar-chart-hours">
-    ${hours.map(h => {
-      const val = hourData[h] || 0;
-      const height = Math.max((val / max) * 100, 2);
-      return `<div class="bar-item mini">
-        <div class="bar" style="height:${height}%" title="${h}:00 - ${val} uploads"></div>
-        ${h % 6 === 0 ? `<div class="bar-label">${h}:00</div>` : ''}
-      </div>`;
-    }).join('')}
-  </div>`;
-}
-
-function renderDashboardQueue(queue) {
-  const el = document.getElementById('dashboard-queue');
-  if (queue.total === 0) {
-    el.innerHTML = '<p class="empty-state small">คิวว่าง</p>';
-    return;
-  }
-  el.innerHTML = `
-    <div class="queue-summary">
-      <span class="queue-badge pending">⏳ ${queue.pending}</span>
-      <span class="queue-badge processing">⚡ ${queue.processing}</span>
-      <span class="queue-badge done">✅ ${queue.done}</span>
-      <span class="queue-badge failed">❌ ${queue.failed}</span>
-    </div>`;
-}
-
-function renderDashboardRecent(items) {
-  const el = document.getElementById('dashboard-recent');
-  if (!items || items.length === 0) {
-    el.innerHTML = '<p class="empty-state small">ยังไม่มีประวัติ</p>';
-    return;
-  }
-  el.innerHTML = items.map(item => `
-    <div class="recent-item">
-      <span class="recent-name">${escapeHtml(item.filename)}</span>
-      <a href="${item.youtube_url}" target="_blank" class="recent-link">↗</a>
-      <span class="recent-time">${timeAgo(item.uploaded_at)}</span>
-    </div>`).join('');
 }
 
 // ==================== AUTH ====================
@@ -185,703 +121,68 @@ async function checkAuth() {
   const res = await fetch('/api/auth/status');
   const data = await res.json();
   const el = document.getElementById('auth-status');
-
   if (!data.hasCredentials) {
     el.className = 'auth-status disconnected';
-    el.innerHTML = '⚠️ ไม่พบ client_secret.json - กรุณาเพิ่มไฟล์ OAuth credentials';
+    el.innerHTML = '⚠️ ไม่พบ client_secret.json';
   } else if (data.authenticated) {
     el.className = 'auth-status connected';
-    el.innerHTML = '✅ เชื่อมต่อ YouTube แล้ว <button class="btn-logout" onclick="logout()">ออกจากระบบ</button>';
-    loadChannelInfo();
+    el.innerHTML = '✅ YouTube เชื่อมต่อแล้ว <button class="btn-logout" onclick="window.app.logout()">ออก</button>';
+    loadChannel();
   } else {
     el.className = 'auth-status disconnected';
-    el.innerHTML = '⚠️ ยังไม่ได้เชื่อมต่อ YouTube <button class="btn-login" onclick="login()">เข้าสู่ระบบ</button>';
+    el.innerHTML = '⚠️ ยังไม่เชื่อมต่อ <button class="btn-login" onclick="window.app.login()">เข้าสู่ระบบ</button>';
   }
 }
 
-async function loadChannelInfo() {
+async function loadChannel() {
   try {
     const res = await fetch('/api/auth/channel');
-    const data = await res.json();
-    if (data && data.title) {
-      const el = document.getElementById('channel-info');
-      el.style.display = 'flex';
-      el.innerHTML = `
-        ${data.thumbnail ? `<img src="${data.thumbnail}" class="channel-avatar">` : ''}
-        <div class="channel-details">
-          <strong>${escapeHtml(data.title)}</strong>
-          <span>${data.subscribers || '?'} subscribers • ${data.videoCount || '?'} videos</span>
-        </div>`;
+    const d = await res.json();
+    if (d && d.title) {
+      const el = document.getElementById('channel-info'); el.style.display = 'flex';
+      el.innerHTML = `${d.thumbnail?`<img src="${d.thumbnail}" class="channel-avatar">`:''}<div class="channel-details"><strong>${escapeHtml(d.title)}</strong><span>${d.subscribers||'?'} subs • ${d.videoCount||'?'} videos</span></div>`;
     }
-  } catch (e) { /* silent */ }
+  } catch(e) {}
 }
 
-async function login() {
-  const res = await fetch('/api/auth/login');
-  const data = await res.json();
-  if (data.url) window.location.href = data.url;
-  else showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+// ==================== STATUS BAR ====================
+function updateConnectionDot(connected) {
+  const dot = document.querySelector('#sb-connection .sb-dot');
+  const text = document.querySelector('#sb-connection .sb-text');
+  if (dot) { dot.className = `sb-dot ${connected?'connected':'disconnected'}`; }
+  if (text) { text.textContent = connected ? 'เชื่อมต่อ' : 'ขาด'; }
 }
 
-async function logout() {
-  await fetch('/api/auth/logout', { method: 'POST' });
-  document.getElementById('channel-info').style.display = 'none';
-  checkAuth();
-  showToast('ออกจากระบบแล้ว', 'info');
-}
-
-// ==================== QUEUE TAB ====================
-function initQueueControls() {
-  document.getElementById('btn-queue-pause').addEventListener('click', async () => {
-    await fetch('/api/upload/queue/pause', { method: 'POST' });
-    showToast('หยุดคิวแล้ว', 'info');
-    loadQueueTab();
-  });
-  document.getElementById('btn-queue-resume').addEventListener('click', async () => {
-    await fetch('/api/upload/queue/resume', { method: 'POST' });
-    showToast('เริ่มคิวอีกครั้ง', 'success');
-    loadQueueTab();
-  });
-  document.getElementById('btn-queue-clear').addEventListener('click', async () => {
-    if (!confirm('ต้องการล้างคิวทั้งหมด?')) return;
-    // Clear happens server-side when queue drains
-    showToast('ล้างคิวแล้ว', 'info');
-  });
-}
-
-async function loadQueueTab() {
-  const res = await fetch('/api/upload/queue');
-  const data = await res.json();
-  updateQueueUI(data);
-}
-
-function updateQueueUI(queue) {
-  const statsEl = document.getElementById('queue-stats');
-  const listEl = document.getElementById('queue-list');
-  if (!statsEl) return;
-
-  statsEl.innerHTML = `
-    <div class="queue-summary-bar">
-      <div class="qs-item"><span class="qs-num">${queue.pending}</span> รอ</div>
-      <div class="qs-item active"><span class="qs-num">${queue.processing}</span> กำลังอัปโหลด</div>
-      <div class="qs-item success"><span class="qs-num">${queue.done}</span> สำเร็จ</div>
-      <div class="qs-item error"><span class="qs-num">${queue.failed}</span> ล้มเหลว</div>
-      ${queue.paused ? '<div class="qs-item paused">⏸️ หยุดชั่วคราว</div>' : ''}
-    </div>`;
-
-  if (!queue.items || queue.items.length === 0) {
-    listEl.innerHTML = '<p class="empty-state">ไม่มีรายการในคิว</p>';
-    return;
+function updateStatusBar(data) {
+  if (!data) return;
+  const qEl = document.querySelector('#sb-queue .sb-text');
+  if (qEl && data.queue) {
+    const p = data.queue.pending||0, pr = data.queue.processing||0;
+    qEl.textContent = pr > 0 ? `อัปโหลด: ${pr} | รอ: ${p}` : p > 0 ? `คิว: ${p}` : 'คิวว่าง';
   }
-
-  listEl.innerHTML = queue.items.map(item => `
-    <div class="queue-row ${item.status}">
-      <div class="queue-row-icon">${getQueueIcon(item.status)}</div>
-      <div class="queue-row-info">
-        <div class="queue-row-name">${escapeHtml(item.filename)}</div>
-        ${item.error ? `<div class="queue-row-error">${escapeHtml(item.error)}</div>` : ''}
-        ${item.retries > 0 ? `<div class="queue-row-retry">retry: ${item.retries}</div>` : ''}
-      </div>
-      <span class="queue-row-status">${getQueueStatusText(item.status)}</span>
-    </div>`).join('');
-}
-
-function getQueueIcon(status) {
-  const icons = { pending: '⏳', processing: '⚡', done: '✅', failed: '❌', cancelled: '🚫' };
-  return icons[status] || '❓';
-}
-
-function getQueueStatusText(status) {
-  const texts = { pending: 'รอ', processing: 'อัปโหลด...', done: 'สำเร็จ', failed: 'ล้มเหลว', cancelled: 'ยกเลิก' };
-  return texts[status] || status;
-}
-
-// ==================== SCHEDULER ====================
-async function initScheduler() {
-  const res = await fetch('/api/stats/scheduler');
-  const config = await res.json();
-
-  document.getElementById('scheduler-enabled').checked = config.enabled || false;
-  document.getElementById('scheduler-interval').value = config.intervalMinutes || 30;
-  document.getElementById('scheduler-watch').checked = config.watchEnabled !== false;
-
-  updateSchedulerStatus(config);
-
-  document.getElementById('btn-scheduler-save').addEventListener('click', async () => {
-    const body = {
-      enabled: document.getElementById('scheduler-enabled').checked,
-      intervalMinutes: parseInt(document.getElementById('scheduler-interval').value) || 30,
-      watchEnabled: document.getElementById('scheduler-watch').checked
-    };
-    const res = await fetch('/api/stats/scheduler', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const data = await res.json();
-    showToast('บันทึกการตั้งค่า Scheduler สำเร็จ', 'success');
-    updateSchedulerStatus(data.config);
-  });
-
-  document.getElementById('btn-scheduler-scan').addEventListener('click', async () => {
-    const res = await fetch('/api/stats/scheduler/scan', { method: 'POST' });
-    const data = await res.json();
-    showToast(`สแกนเสร็จ! พบไฟล์ใหม่ ${data.queued} ไฟล์`, 'success');
-  });
-}
-
-function updateSchedulerStatus(config) {
-  const el = document.getElementById('scheduler-status');
-  el.innerHTML = `
-    <div class="status-info">
-      <span class="status-dot ${config.enabled ? 'active' : 'inactive'}"></span>
-      ${config.enabled ? '🟢 Scheduler ทำงานอยู่' : '⚪ Scheduler ปิดอยู่'}
-      ${config.lastRun ? `<br>🕐 สแกนล่าสุด: ${new Date(config.lastRun).toLocaleString('th-TH')}` : ''}
-    </div>`;
-}
-
-// ==================== DROP ZONE ====================
-function initDropZone() {
-  const dropZone = document.getElementById('drop-zone');
-  const fileInput = document.getElementById('file-input');
-
-  dropZone.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (e) => {
-    addFilesToQueue(Array.from(e.target.files));
-    fileInput.value = '';
-  });
-
-  dropZone.addEventListener('dragenter', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-  dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); });
-
-  dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-    const files = Array.from(e.dataTransfer.files).filter(f => {
-      const ext = f.name.split('.').pop().toLowerCase();
-      return ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm', 'm4v', 'mpeg', 'mpg'].includes(ext);
-    });
-    if (files.length === 0) { showToast('ไม่มีไฟล์วิดีโอที่รองรับ', 'error'); return; }
-    addFilesToQueue(files);
-  });
-
-  document.addEventListener('dragover', (e) => e.preventDefault());
-  document.addEventListener('drop', (e) => e.preventDefault());
-
-  document.getElementById('btn-upload-queue').addEventListener('click', uploadDropQueue);
-  document.getElementById('btn-clear-queue').addEventListener('click', clearDropQueue);
-}
-
-function addFilesToQueue(files) {
-  files.forEach(file => {
-    if (dropQueue.find(q => q.file.name === file.name && q.file.size === file.size)) return;
-    dropQueue.push({ file, status: 'pending', result: null });
-  });
-  renderDropQueue();
-}
-
-function renderDropQueue() {
-  const container = document.getElementById('drop-queue');
-  const list = document.getElementById('drop-queue-list');
-  if (dropQueue.length === 0) { container.style.display = 'none'; return; }
-  container.style.display = 'block';
-  list.innerHTML = dropQueue.map((item, idx) => `
-    <div class="queue-item">
-      <div class="queue-icon">🎬</div>
-      <div class="queue-info">
-        <div class="queue-name">${escapeHtml(item.file.name)}</div>
-        <div class="queue-size">${formatFileSize(item.file.size)}</div>
-      </div>
-      <span class="queue-status ${item.status}">${getDropStatusText(item)}</span>
-      ${item.status === 'pending' ? `<button class="btn-remove" onclick="removeFromDropQueue(${idx})">✕</button>` : ''}
-    </div>`).join('');
-}
-
-// ==================== TIKTOK ====================
-function initTikTok() {
-  // Search button
-  document.getElementById('btn-tiktok-search').addEventListener('click', searchTikTok);
-  document.getElementById('tiktok-keyword').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') searchTikTok();
-  });
-
-  // Direct URL download
-  document.getElementById('btn-tiktok-download-url').addEventListener('click', downloadTikTokUrl);
-  document.getElementById('btn-tiktok-download-upload-url').addEventListener('click', downloadAndUploadTikTokUrl);
-
-  // Batch actions
-  document.getElementById('btn-tiktok-select-all').addEventListener('click', toggleSelectAllTikTok);
-  document.getElementById('btn-tiktok-batch-upload').addEventListener('click', batchUploadTikTok);
-}
-
-// Initialize TikTok when DOM is ready
-document.addEventListener('DOMContentLoaded', initTikTok);
-
-let tiktokSearchResults = [];
-
-async function searchTikTok() {
-  const keyword = document.getElementById('tiktok-keyword').value.trim();
-  if (!keyword) {
-    showToast('กรุณาใส่คีย์เวิร์ด', 'error');
-    return;
-  }
-
-  const loading = document.getElementById('tiktok-loading');
-  const results = document.getElementById('tiktok-results');
-  loading.style.display = 'flex';
-  results.style.display = 'none';
-
-  try {
-    const res = await fetch('/api/tiktok/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword, count: 12 })
-    });
-
-    const data = await res.json();
-    loading.style.display = 'none';
-
-    if (data.error) {
-      showToast(data.error, 'error');
-      return;
-    }
-
-    tiktokSearchResults = data.videos || [];
-    document.getElementById('tiktok-result-keyword').textContent = `"${keyword}" (${tiktokSearchResults.length} ผลลัพธ์)`;
-    renderTikTokResults();
-    results.style.display = 'block';
-  } catch (err) {
-    loading.style.display = 'none';
-    showToast('เกิดข้อผิดพลาดในการค้นหา: ' + err.message, 'error');
+  const uEl = document.querySelector('#sb-uptime .sb-text');
+  if (uEl && data.uptime) uEl.textContent = data.uptime;
+  const hEl = document.getElementById('sb-health');
+  if (hEl && data.overall) {
+    const icon = hEl.querySelector('.sb-icon'), text = hEl.querySelector('.sb-text');
+    const map = { healthy:['💚','ปกติ'], warning:['💛','เตือน'], critical:['🔴','วิกฤต'], error:['❌','ผิดพลาด'] };
+    const [i,t] = map[data.overall] || ['❓','?'];
+    icon.textContent = i; text.textContent = t;
   }
 }
 
-function renderTikTokResults() {
-  const list = document.getElementById('tiktok-video-list');
-
-  if (tiktokSearchResults.length === 0) {
-    list.innerHTML = '<p class="empty-state">ไม่พบวิดีโอ ลองเปลี่ยนคีย์เวิร์ด</p>';
-    return;
-  }
-
-  list.innerHTML = tiktokSearchResults.map((video, idx) => `
-    <div class="tiktok-video-item ${video.alreadyUploaded ? 'already-uploaded' : ''}" data-idx="${idx}">
-      <div class="tiktok-select">
-        <input type="checkbox" class="tiktok-checkbox" data-idx="${idx}" ${video.alreadyUploaded ? 'disabled' : ''}>
-      </div>
-      <div class="tiktok-thumb">
-        ${video.cover ? `<img src="${video.cover}" alt="thumbnail" loading="lazy">` : '<div class="thumb-placeholder">🎬</div>'}
-      </div>
-      <div class="tiktok-video-info">
-        <div class="tiktok-video-title">${escapeHtml(video.desc || 'ไม่มีคำอธิบาย').substring(0, 100)}</div>
-        <div class="tiktok-video-meta">
-          <span>@${escapeHtml(video.author)}</span>
-          <span>❤️ ${formatCount(video.likeCount)}</span>
-          <span>▶️ ${formatCount(video.playCount)}</span>
-          <span>💬 ${formatCount(video.commentCount)}</span>
-          ${video.duration ? `<span>⏱️ ${video.duration}s</span>` : ''}
-        </div>
-        ${video.alreadyUploaded ? `<div class="tiktok-duplicate-badge">✅ อัปโหลดแล้ว${video.youtubeUrl ? ` — <a href="${video.youtubeUrl}" target="_blank">ดูบน YouTube</a>` : ''}</div>` : ''}
-      </div>
-      <div class="tiktok-video-actions">
-        ${video.alreadyUploaded
-          ? `<span class="badge badge-success">ซ้ำ</span>`
-          : `<button class="btn btn-secondary btn-sm" onclick="downloadSingleTikTok(${idx})">⬇️ โหลด</button>
-             <button class="btn btn-primary btn-sm" onclick="downloadAndUploadSingleTikTok(${idx})">🚀 โหลด+อัป</button>`
-        }
-      </div>
-    </div>
-  `).join('');
+async function loadHealthStatus() {
+  try { const r = await fetch('/api/health'); updateStatusBar(await r.json()); } catch(e) {}
 }
 
-async function downloadSingleTikTok(idx) {
-  const video = tiktokSearchResults[idx];
-  if (!video) return;
-
-  showToast(`กำลังดาวน์โหลด: ${video.desc?.substring(0, 30) || 'วิดีโอ'}...`, 'info');
-
-  try {
-    const res = await fetch('/api/tiktok/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: video.videoUrl, filename: video.desc?.substring(0, 50) })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(`ดาวน์โหลดสำเร็จ: ${data.filename} (${tiktokService_formatSize(data.size)})`, 'success');
-    } else {
-      showToast(`ดาวน์โหลดล้มเหลว: ${data.error}`, 'error');
-    }
-  } catch (err) {
-    showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
-  }
+async function runCleanup() {
+  try { const r = await fetch('/api/health/cleanup',{method:'POST'}); const d=await r.json(); showToast(`🧹 ลบ ${d.tempFiles.cleaned} ไฟล์ temp`, 'success'); } catch(e) { showToast('ล้มเหลว','error'); }
 }
 
-async function downloadAndUploadSingleTikTok(idx) {
-  const video = tiktokSearchResults[idx];
-  if (!video) return;
-
-  const title = video.desc?.substring(0, 100) || `TikTok Video ${video.id}`;
-  showToast(`กำลังดาวน์โหลดและอัปโหลด: ${title.substring(0, 30)}...`, 'info');
-
-  try {
-    const res = await fetch('/api/tiktok/download-and-upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoUrl: video.videoUrl,
-        title: title,
-        filename: title
-      })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(`อัปโหลด YouTube สำเร็จ!`, 'success');
-      // Mark as uploaded in local results
-      video.alreadyUploaded = true;
-      video.youtubeUrl = data.youtubeUrl;
-      renderTikTokResults();
-      // Show result link
-      const resultsEl = document.getElementById('tiktok-batch-results');
-      resultsEl.style.display = 'block';
-      resultsEl.innerHTML += `
-        <div class="drop-result-item">
-          ✅ <strong>${escapeHtml(title.substring(0, 50))}</strong> →
-          <a href="${data.youtubeUrl}" target="_blank">${data.youtubeUrl}</a>
-        </div>`;
-    } else if (data.duplicate) {
-      showToast(`⚠️ วิดีโอนี้เคยอัปแล้ว`, 'info');
-      video.alreadyUploaded = true;
-      video.youtubeUrl = data.youtubeUrl;
-      renderTikTokResults();
-    } else {
-      showToast(`ล้มเหลว: ${data.error}`, 'error');
-    }
-  } catch (err) {
-    showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
-  }
-}
-
-async function downloadTikTokUrl() {
-  const url = document.getElementById('tiktok-url').value.trim();
-  if (!url) {
-    showToast('กรุณาใส่ลิงก์ TikTok', 'error');
-    return;
-  }
-
-  showToast('กำลังดาวน์โหลด (ไม่มีลายน้ำ)...', 'info');
-
-  try {
-    const res = await fetch('/api/tiktok/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: url })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(`ดาวน์โหลดสำเร็จ: ${data.filename}`, 'success');
-    } else {
-      showToast(`ดาวน์โหลดล้มเหลว: ${data.error}`, 'error');
-    }
-  } catch (err) {
-    showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
-  }
-}
-
-async function downloadAndUploadTikTokUrl() {
-  const url = document.getElementById('tiktok-url').value.trim();
-  if (!url) {
-    showToast('กรุณาใส่ลิงก์ TikTok', 'error');
-    return;
-  }
-
-  showToast('กำลังดาวน์โหลดและอัปโหลดไป YouTube...', 'info');
-
-  try {
-    const res = await fetch('/api/tiktok/download-and-upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: url })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast('อัปโหลด YouTube สำเร็จ!', 'success');
-      document.getElementById('tiktok-url').value = '';
-      const resultsEl = document.getElementById('tiktok-batch-results');
-      resultsEl.style.display = 'block';
-      resultsEl.innerHTML += `
-        <div class="drop-result-item">
-          ✅ <strong>${escapeHtml(data.filename)}</strong> →
-          <a href="${data.youtubeUrl}" target="_blank">${data.youtubeUrl}</a>
-        </div>`;
-    } else if (data.duplicate) {
-      showToast(`⚠️ วิดีโอนี้เคยอัปโหลดแล้ว`, 'info');
-      const resultsEl = document.getElementById('tiktok-batch-results');
-      resultsEl.style.display = 'block';
-      resultsEl.innerHTML += `
-        <div class="drop-result-item">
-          ⚠️ <strong>ซ้ำ</strong> — เคยอัปแล้ว:
-          <a href="${data.youtubeUrl}" target="_blank">${data.youtubeUrl}</a>
-        </div>`;
-    } else {
-      showToast(`ล้มเหลว: ${data.error}`, 'error');
-    }
-  } catch (err) {
-    showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
-  }
-}
-
-function toggleSelectAllTikTok() {
-  const checkboxes = document.querySelectorAll('.tiktok-checkbox:not(:disabled)');
-  const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-  checkboxes.forEach(cb => cb.checked = !allChecked);
-}
-
-async function batchUploadTikTok() {
-  const checkboxes = document.querySelectorAll('.tiktok-checkbox:checked');
-  if (checkboxes.length === 0) {
-    showToast('กรุณาเลือกวิดีโออย่างน้อย 1 รายการ', 'error');
-    return;
-  }
-
-  const selectedVideos = Array.from(checkboxes).map(cb => {
-    const idx = parseInt(cb.dataset.idx);
-    const video = tiktokSearchResults[idx];
-    return {
-      videoUrl: video.videoUrl,
-      title: (video.desc || `TikTok ${video.id}`).substring(0, 100),
-      desc: video.desc
-    };
-  });
-
-  if (!confirm(`ต้องการดาวน์โหลดและอัปโหลด ${selectedVideos.length} วิดีโอไป YouTube?`)) return;
-
-  try {
-    const res = await fetch('/api/tiktok/batch-upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videos: selectedVideos })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(`เริ่มดาวน์โหลดและอัปโหลด ${data.total} วิดีโอ...`, 'info');
-      trackTikTokProgress();
-    } else {
-      showToast(`ล้มเหลว: ${data.error}`, 'error');
-    }
-  } catch (err) {
-    showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
-  }
-}
-
-function trackTikTokProgress() {
-  const progressEl = document.getElementById('tiktok-progress');
-  const resultsEl = document.getElementById('tiktok-batch-results');
-  progressEl.style.display = 'block';
-  resultsEl.style.display = 'block';
-  resultsEl.innerHTML = '';
-
-  const eventSource = new EventSource('/api/tiktok/progress');
-  eventSource.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-
-    const phaseText = data.phase === 'downloading' ? '⬇️ กำลังดาวน์โหลด' :
-                      data.phase === 'uploading' ? '⬆️ กำลังอัปโหลด YouTube' : 'กำลังดำเนินการ';
-
-    document.getElementById('tiktok-progress-text').textContent = data.status === 'done' ? '🎉 เสร็จสิ้น!' : phaseText;
-    document.getElementById('tiktok-progress-count').textContent = `${data.current}/${data.total}`;
-    document.getElementById('tiktok-progress-file').textContent = data.currentFile || '';
-    document.getElementById('tiktok-progress-phase').textContent = data.phase ? phaseText : '';
-
-    const pct = data.total > 0 ? (data.current / data.total) * 100 : 0;
-    document.getElementById('tiktok-progress-fill').style.width = pct + '%';
-
-    // Render completed results
-    if (data.results && data.results.length > 0) {
-      resultsEl.innerHTML = data.results.map(r => {
-        if (r.success) {
-          return `<div class="drop-result-item">
-            ✅ <strong>${escapeHtml(r.title.substring(0, 50))}</strong> →
-            <a href="${r.youtubeUrl}" target="_blank">${r.youtubeUrl}</a>
-          </div>`;
-        } else {
-          return `<div class="drop-result-item error">
-            ❌ <strong>${escapeHtml(r.title.substring(0, 50))}</strong> — ${escapeHtml(r.error)}
-          </div>`;
-        }
-      }).join('');
-    }
-
-    if (data.status === 'done') {
-      eventSource.close();
-      const success = data.results.filter(r => r.success).length;
-      const failed = data.results.filter(r => !r.success).length;
-      showToast(`TikTok → YouTube เสร็จ! สำเร็จ ${success}, ล้มเหลว ${failed}`, success > 0 ? 'success' : 'error');
-      loadHistory();
-    }
-  };
-
-  eventSource.onerror = () => {
-    eventSource.close();
-    progressEl.style.display = 'none';
-  };
-}
-
-// Helper functions for TikTok
-function formatCount(num) {
-  if (!num) return '0';
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-  if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-  return num.toString();
-}
-
-function tiktokService_formatSize(bytes) {
-  if (!bytes) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-function getDropStatusText(item) {
-  const texts = { pending: '⏳ รอ', uploading: '⬆️ อัปโหลด...', done: '✅ สำเร็จ', error: '❌ ล้มเหลว' };
-  return texts[item.status] || '';
-}
-
-function removeFromDropQueue(idx) { dropQueue.splice(idx, 1); renderDropQueue(); }
-
-function clearDropQueue() {
-  dropQueue = [];
-  renderDropQueue();
-  document.getElementById('drop-results').style.display = 'none';
-}
-
-async function uploadDropQueue() {
-  const pending = dropQueue.filter(q => q.status === 'pending');
-  if (pending.length === 0) { showToast('ไม่มีไฟล์ที่ต้องอัปโหลด', 'info'); return; }
-
-  const progressEl = document.getElementById('drop-progress');
-  const resultsEl = document.getElementById('drop-results');
-  progressEl.style.display = 'block';
-  resultsEl.style.display = 'block';
-  resultsEl.innerHTML = '';
-  document.getElementById('btn-upload-queue').disabled = true;
-
-  let successCount = 0, errorCount = 0;
-
-  for (let i = 0; i < dropQueue.length; i++) {
-    const item = dropQueue[i];
-    if (item.status !== 'pending') continue;
-
-    item.status = 'uploading';
-    renderDropQueue();
-
-    document.getElementById('drop-progress-text').textContent = 'กำลังอัปโหลด...';
-    document.getElementById('drop-progress-count').textContent = `${successCount + errorCount + 1}/${pending.length}`;
-    document.getElementById('drop-progress-file').textContent = item.file.name;
-    const pct = ((successCount + errorCount + 1) / pending.length) * 100;
-    document.getElementById('drop-progress-fill').style.width = pct + '%';
-
-    try {
-      const formData = new FormData();
-      formData.append('video', item.file);
-      formData.append('title', item.file.name.replace(/\.[^.]+$/, ''));
-
-      const res = await fetch('/api/drop-and-upload-youtube', { method: 'POST', body: formData });
-      const data = await res.json();
-
-      if (data.success) {
-        item.status = 'done'; item.result = data; successCount++;
-        resultsEl.innerHTML += `<div class="drop-result-item">✅ <strong>${escapeHtml(item.file.name)}</strong> → <a href="${data.youtubeUrl}" target="_blank">${data.youtubeUrl}</a></div>`;
-      } else {
-        item.status = 'error'; errorCount++;
-        resultsEl.innerHTML += `<div class="drop-result-item error">❌ <strong>${escapeHtml(item.file.name)}</strong> — ${escapeHtml(data.error)}</div>`;
-      }
-    } catch (err) {
-      item.status = 'error'; errorCount++;
-      resultsEl.innerHTML += `<div class="drop-result-item error">❌ <strong>${escapeHtml(item.file.name)}</strong> — ${escapeHtml(err.message)}</div>`;
-    }
-    renderDropQueue();
-    if (i < dropQueue.length - 1) await new Promise(r => setTimeout(r, 1500));
-  }
-
-  document.getElementById('drop-progress-text').textContent = 'อัปโหลดเสร็จสิ้น!';
-  document.getElementById('btn-upload-queue').disabled = false;
-  showToast(`อัปโหลดเสร็จ! สำเร็จ ${successCount}, ล้มเหลว ${errorCount}`, successCount > 0 ? 'success' : 'error');
-  loadHistory();
-  loadDashboard();
-}
-
-// ==================== SETTINGS ====================
-async function loadSettings() {
-  const res = await fetch('/api/settings');
-  const settings = await res.json();
-  if (settings.folder) document.getElementById('folder').value = settings.folder;
-  if (settings.privacy) document.getElementById('privacy').value = settings.privacy;
-  if (settings.deleteAfterUpload) document.getElementById('deleteAfterUpload').checked = settings.deleteAfterUpload === 'true' || settings.deleteAfterUpload === true;
-  if (settings.defaultDescription) document.getElementById('defaultDescription').value = settings.defaultDescription;
-  if (settings.defaultTags) document.getElementById('defaultTags').value = settings.defaultTags;
-
-  document.getElementById('settings-form').addEventListener('submit', saveSettings);
-}
-
-async function saveSettings(e) {
-  e.preventDefault();
-  const data = {
-    folder: document.getElementById('folder').value,
-    privacy: document.getElementById('privacy').value,
-    deleteAfterUpload: document.getElementById('deleteAfterUpload').checked,
-    defaultDescription: document.getElementById('defaultDescription').value,
-    defaultTags: document.getElementById('defaultTags').value
-  };
-  const res = await fetch('/api/settings', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-  });
-  if (res.ok) { showToast('บันทึกการตั้งค่าสำเร็จ!', 'success'); loadFiles(); }
-  else showToast('เกิดข้อผิดพลาด', 'error');
-}
-
-// ==================== FILES ====================
-async function loadFiles() {
-  const res = await fetch('/api/files');
-  const data = await res.json();
-  const list = document.getElementById('file-list');
-
-  if (data.error) { list.innerHTML = `<p class="empty-state">❌ ${data.error}</p>`; return; }
-  if (!data.folder) { list.innerHTML = '<p class="empty-state">⚙️ กรุณาตั้งค่าโฟลเดอร์ก่อนใช้งาน</p>'; return; }
-  if (data.files.length === 0) { list.innerHTML = '<p class="empty-state">📭 ไม่พบไฟล์วิดีโอในโฟลเดอร์</p>'; return; }
-
-  const sizeEl = document.getElementById('files-total-size');
-  if (sizeEl && data.totalSize) sizeEl.textContent = `💾 ${data.totalSize}`;
-
-  list.innerHTML = data.files.map(file => `
-    <div class="file-item ${file.uploaded ? 'uploaded' : ''}">
-      <div class="file-icon">🎬</div>
-      <div class="file-info">
-        <div class="file-name">${escapeHtml(file.filename)}</div>
-        <div class="file-meta">${file.sizeFormatted} • ${new Date(file.modified).toLocaleString('th-TH')}</div>
-      </div>
-      <div class="file-actions">
-        ${file.uploaded
-          ? `<span class="badge badge-success">✅ อัปโหลดแล้ว</span><a href="${file.youtubeUrl}" target="_blank" class="btn btn-secondary">🔗 YouTube</a>`
-          : `<span class="badge badge-pending">⏳ รอ</span><button class="btn btn-primary" onclick="openUploadModal('${escapeHtml(file.filename)}')">📤 อัปโหลด</button>`}
-      </div>
-    </div>`).join('');
-}
-
-// Upload Modal
+// ==================== UPLOAD MODAL ====================
 function openUploadModal(filename) {
   document.getElementById('upload-filename').value = filename;
   document.getElementById('upload-title').value = filename.replace(/\.[^.]+$/, '');
-  document.getElementById('upload-description').value = document.getElementById('defaultDescription').value || '';
-  document.getElementById('upload-tags').value = document.getElementById('defaultTags').value || '';
-  document.getElementById('upload-privacy').value = document.getElementById('privacy').value || 'public';
   document.getElementById('upload-modal').style.display = 'flex';
 }
 
@@ -890,299 +191,59 @@ function closeModal() { document.getElementById('upload-modal').style.display = 
 document.getElementById('upload-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const filename = document.getElementById('upload-filename').value;
-  const title = document.getElementById('upload-title').value;
-  const description = document.getElementById('upload-description').value;
-  const tags = document.getElementById('upload-tags').value;
-  const privacy = document.getElementById('upload-privacy').value;
-
-  closeModal();
-  showToast(`กำลังอัปโหลด ${filename}...`, 'info');
-
-  const res = await fetch('/api/upload', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename, title, description, tags, privacy })
-  });
+  const body = { filename, title: document.getElementById('upload-title').value, description: document.getElementById('upload-description').value, tags: document.getElementById('upload-tags').value, privacy: document.getElementById('upload-privacy').value };
+  closeModal(); showToast(`อัปโหลด ${filename}...`, 'info');
+  const res = await fetch('/api/upload', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const data = await res.json();
-  if (data.success) {
-    showToast(`อัปโหลดสำเร็จ! ${data.deleted ? '(ลบไฟล์แล้ว)' : ''}`, 'success');
-    loadFiles(); loadHistory(); loadDashboard();
-  } else {
-    showToast(`เกิดข้อผิดพลาด: ${data.error}`, 'error');
+  if (data.success) { showToast('อัปโหลดสำเร็จ!', 'success'); if (currentPage && currentPage.init) currentPage.init(); }
+  else showToast(data.error, 'error');
+});
+
+// ==================== KEYBOARD SHORTCUTS ====================
+document.addEventListener('keydown', (e) => {
+  if (['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
+  const paths = ['/','/upload','/tiktok','/files','/queue','/scheduler','/settings','/history'];
+  if (e.key >= '1' && e.key <= '8') { e.preventDefault(); navigate(paths[parseInt(e.key)-1]); return; }
+  switch (e.key.toLowerCase()) {
+    case 'r': e.preventDefault(); if (window.filesPage) window.filesPage.reload(); showToast('🔄','info'); break;
+    case '?': e.preventDefault(); const m=document.getElementById('shortcuts-modal'); m.style.display=m.style.display==='none'?'flex':'none'; break;
+    case 'escape': document.getElementById('upload-modal').style.display='none'; document.getElementById('shortcuts-modal').style.display='none'; break;
   }
 });
 
-// Upload All
-document.getElementById('btn-upload-all').addEventListener('click', async () => {
-  if (!confirm('ต้องการอัปโหลดไฟล์ทั้งหมดที่ยังไม่ได้อัปโหลด?')) return;
-  const res = await fetch('/api/upload-all', { method: 'POST' });
-  const data = await res.json();
-  if (data.error) { showToast(data.error, 'error'); return; }
-  if (data.totalFiles === 0) { showToast('ไม่มีไฟล์ที่ต้องอัปโหลด', 'info'); return; }
-  showToast(`เพิ่ม ${data.totalFiles} ไฟล์ลงคิว`, 'info');
-});
-
-document.getElementById('btn-refresh').addEventListener('click', () => { loadFiles(); showToast('รีเฟรชแล้ว', 'info'); });
-
-// ==================== HISTORY ====================
-async function loadHistory() {
-  const res = await fetch('/api/history');
-  const data = await res.json();
-  const list = document.getElementById('history-list');
-  const countEl = document.getElementById('history-count');
-
-  // Support both legacy (array) and new (paginated) formats
-  const items = Array.isArray(data) ? data : (data.items || []);
-  const total = Array.isArray(data) ? data.length : (data.total || 0);
-
-  if (countEl) countEl.textContent = `${total} รายการ`;
-
-  if (items.length === 0) {
-    list.innerHTML = '<p class="empty-state">ยังไม่มีประวัติการอัปโหลด</p>';
-    return;
-  }
-
-  list.innerHTML = items.map(item => `
-    <div class="history-item">
-      <div class="file-icon">${item.deleted ? '🗑️' : '✅'}</div>
-      <div class="file-info">
-        <div class="file-name">${escapeHtml(item.filename)}</div>
-        <div class="file-meta">
-          ${new Date(item.uploaded_at).toLocaleString('th-TH')}
-          ${item.deleted ? ' • ลบไฟล์แล้ว' : ''}
-          ${item.youtube_url ? ` • <a href="${item.youtube_url}" target="_blank">ดูบน YouTube ↗</a>` : ''}
-        </div>
-      </div>
-    </div>`).join('');
+// ==================== NOTIFICATIONS ====================
+function sendDesktopNotif(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body });
 }
-
-document.getElementById('btn-clear-history').addEventListener('click', async () => {
-  if (!confirm('ต้องการล้างประวัติการอัปโหลดทั้งหมด?')) return;
-  await fetch('/api/history', { method: 'DELETE' });
-  loadHistory(); loadFiles(); loadDashboard();
-  showToast('ล้างประวัติแล้ว', 'info');
-});
+document.addEventListener('click', () => { if ('Notification' in window && Notification.permission==='default') Notification.requestPermission(); }, { once: true });
 
 // ==================== UTILITIES ====================
-function showToast(message, type = 'info') {
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.textContent = message;
-  document.body.appendChild(toast);
-  setTimeout(() => { toast.classList.add('fade-out'); setTimeout(() => toast.remove(), 300); }, 4000);
+function showToast(msg, type = 'info') {
+  const t = document.createElement('div'); t.className = `toast ${type}`; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => { t.classList.add('fade-out'); setTimeout(() => t.remove(), 300); }, 4000);
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
+function escapeHtml(text) { const d = document.createElement('div'); d.textContent = text; return d.innerHTML; }
 
 function formatFileSize(bytes) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  if (!bytes) return '0 B'; const k=1024; const s=['B','KB','MB','GB'];
+  const i=Math.floor(Math.log(bytes)/Math.log(k));
+  return parseFloat((bytes/Math.pow(k,i)).toFixed(2))+' '+s[i];
 }
 
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'เมื่อสักครู่';
-  if (mins < 60) return `${mins} นาทีที่แล้ว`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} ชั่วโมงที่แล้ว`;
-  const days = Math.floor(hours / 24);
-  return `${days} วันที่แล้ว`;
+  const m = Math.floor(diff/60000);
+  if (m<1) return 'เมื่อสักครู่'; if (m<60) return `${m} นาทีที่แล้ว`;
+  const h = Math.floor(m/60); if (h<24) return `${h} ชม.ที่แล้ว`;
+  return `${Math.floor(h/24)} วันที่แล้ว`;
 }
 
-// ==================== STATUS BAR ====================
-function updateStatusBar(data) {
-  if (!data) return;
+// ==================== GLOBAL EXPORTS ====================
+window.app = { showToast, escapeHtml, formatFileSize, timeAgo, openUploadModal, login, logout: doLogout, navigate };
+window.closeModal = closeModal;
+window.runCleanup = runCleanup;
 
-  // Connection status
-  const connEl = document.getElementById('sb-connection');
-  if (connEl) {
-    const dot = connEl.querySelector('.sb-dot');
-    const text = connEl.querySelector('.sb-text');
-    if (ws && ws.readyState === 1) {
-      dot.className = 'sb-dot connected';
-      text.textContent = 'เชื่อมต่อ';
-    } else {
-      dot.className = 'sb-dot disconnected';
-      text.textContent = 'ขาดการเชื่อมต่อ';
-    }
-  }
-
-  // Queue
-  const queueEl = document.getElementById('sb-queue');
-  if (queueEl && data.queue) {
-    const text = queueEl.querySelector('.sb-text');
-    const pending = data.queue.pending || 0;
-    const processing = data.queue.processing || 0;
-    if (processing > 0) text.textContent = `อัปโหลด: ${processing} | รอ: ${pending}`;
-    else if (pending > 0) text.textContent = `คิว: ${pending}`;
-    else text.textContent = 'คิวว่าง';
-  }
-
-  // Uptime
-  const uptimeEl = document.getElementById('sb-uptime');
-  if (uptimeEl && data.uptime) {
-    uptimeEl.querySelector('.sb-text').textContent = data.uptime;
-  }
-
-  // Health
-  const healthEl = document.getElementById('sb-health');
-  if (healthEl && data.overall) {
-    const icon = healthEl.querySelector('.sb-icon');
-    const text = healthEl.querySelector('.sb-text');
-    switch (data.overall) {
-      case 'healthy': icon.textContent = '💚'; text.textContent = 'ปกติ'; break;
-      case 'warning': icon.textContent = '💛'; text.textContent = 'เตือน'; break;
-      case 'critical': icon.textContent = '🔴'; text.textContent = 'วิกฤต'; break;
-      case 'error': icon.textContent = '❌'; text.textContent = 'ผิดพลาด'; break;
-    }
-  }
-}
-
-async function runCleanup() {
-  try {
-    const res = await fetch('/api/health/cleanup', { method: 'POST' });
-    const data = await res.json();
-    showToast(`🧹 ทำความสะอาดเสร็จ! ลบ ${data.tempFiles.cleaned} ไฟล์ temp`, 'success');
-  } catch (e) {
-    showToast('ล้างข้อมูลล้มเหลว', 'error');
-  }
-}
-
-// ==================== KEYBOARD SHORTCUTS ====================
-document.addEventListener('keydown', (e) => {
-  // Ignore when typing in inputs
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-
-  const tabs = ['dashboard', 'drop', 'tiktok', 'files', 'queue', 'scheduler', 'settings', 'history'];
-
-  // Number keys 1-8 for tabs
-  if (e.key >= '1' && e.key <= '8') {
-    e.preventDefault();
-    const idx = parseInt(e.key) - 1;
-    if (idx < tabs.length) {
-      const tabBtn = document.querySelector(`.tab[data-tab="${tabs[idx]}"]`);
-      if (tabBtn) tabBtn.click();
-    }
-    return;
-  }
-
-  switch (e.key.toLowerCase()) {
-    case 'r':
-      e.preventDefault();
-      loadFiles();
-      showToast('🔄 รีเฟรช', 'info');
-      break;
-    case 'u':
-      e.preventDefault();
-      document.getElementById('btn-upload-all')?.click();
-      break;
-    case 's':
-      e.preventDefault();
-      document.getElementById('btn-scheduler-scan')?.click();
-      break;
-    case '?':
-      e.preventDefault();
-      const modal = document.getElementById('shortcuts-modal');
-      modal.style.display = modal.style.display === 'none' ? 'flex' : 'none';
-      break;
-    case 'escape':
-      document.getElementById('upload-modal').style.display = 'none';
-      document.getElementById('shortcuts-modal').style.display = 'none';
-      break;
-  }
-});
-
-// ==================== DESKTOP NOTIFICATIONS ====================
-function requestNotificationPermission() {
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
-}
-
-function sendDesktopNotification(title, body, icon = '🎬') {
-  if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, { body, icon: '/favicon.ico', badge: '/favicon.ico' });
-  }
-}
-
-// Request permission on first interaction
-document.addEventListener('click', () => requestNotificationPermission(), { once: true });
-
-// ==================== ENHANCED WS MESSAGE HANDLER ====================
-// Override handleWSMessage to add status bar + notifications
-const _origHandleWSMessage = handleWSMessage;
-handleWSMessage = function(type, data) {
-  // Handle system status updates
-  if (type === 'system:status') {
-    updateStatusBar(data);
-    return;
-  }
-
-  // Desktop notifications for important events
-  if (type === 'queue:completed') {
-    sendDesktopNotification('อัปโหลดสำเร็จ ✅', data.filename);
-  } else if (type === 'queue:failed') {
-    sendDesktopNotification('อัปโหลดล้มเหลว ❌', data.filename);
-  }
-
-  // Original handler
-  _origHandleWSMessage(type, data);
-};
-
-// Load initial health status
-async function loadHealthStatus() {
-  try {
-    const res = await fetch('/api/health');
-    const data = await res.json();
-    updateStatusBar(data);
-  } catch (e) { /* silent */ }
-}
-
-// Init status bar on load
-document.addEventListener('DOMContentLoaded', () => {
-  loadHealthStatus();
-  // Refresh health every 30s as fallback
-  setInterval(loadHealthStatus, 30000);
-});
-
-// ==================== EVENT BUS NOTIFICATIONS ====================
-// Handle server-pushed notifications from the Rules Engine
-function handleNotification(data) {
-  // Show toast based on level
-  showToast(`${data.title}: ${data.message}`, data.level === 'error' ? 'error' : data.level === 'success' ? 'success' : 'info');
-
-  // Desktop notification for important ones
-  if (data.level === 'error' || data.level === 'success') {
-    sendDesktopNotification(data.title, data.message);
-  }
-}
-
-// Handle dashboard refresh command from EventBus
-function handleDashboardRefresh(data) {
-  // Only refresh if dashboard is currently visible
-  const dashboardTab = document.querySelector('.tab[data-tab="dashboard"]');
-  if (dashboardTab && dashboardTab.classList.contains('active')) {
-    loadDashboard();
-  }
-}
-
-// Enhanced WS message handler — add notification + dashboard refresh support
-const _origHandleWSMessage2 = handleWSMessage;
-handleWSMessage = function(type, data) {
-  if (type === 'notification') {
-    handleNotification(data);
-    return;
-  }
-  if (type === 'dashboard:refresh') {
-    handleDashboardRefresh(data);
-    return;
-  }
-  _origHandleWSMessage2(type, data);
-};
+async function login() { const r=await fetch('/api/auth/login'); const d=await r.json(); if(d.url) location.href=d.url; else showToast(d.error,'error'); }
+async function doLogout() { await fetch('/api/auth/logout',{method:'POST'}); document.getElementById('channel-info').style.display='none'; checkAuth(); showToast('ออกจากระบบ','info'); }

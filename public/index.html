@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AutoUploader — TikTok → YouTube</title>
+  <title>YouTube Auto Uploader v2</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,33 +14,34 @@
     <header>
       <div class="header-top">
         <h1>🎬 YouTube Auto Uploader</h1>
-        <span class="version">v2.0</span>
+        <span class="version">v2.1</span>
       </div>
-      <p class="subtitle">อัปโหลดวิดีโอขึ้น YouTube แบบอัตโนมัติ • Queue • Scheduler • Analytics</p>
+      <p class="subtitle">Queue • Scheduler • TikTok • Analytics</p>
       <div id="auth-status" class="auth-status"></div>
       <div id="channel-info" class="channel-info" style="display:none;"></div>
     </header>
 
+    <!-- Navigation — แต่ละ tab = 1 URL path -->
     <nav class="tabs">
-      <button class="tab active" data-tab="dashboard">📊 Dashboard</button>
-      <button class="tab" data-tab="drop">📤 ลากวาง</button>
-      <button class="tab" data-tab="tiktok">🎵 TikTok</button>
-      <button class="tab" data-tab="files">📁 ไฟล์วิดีโอ</button>
-      <button class="tab" data-tab="queue">🔄 คิว</button>
-      <button class="tab" data-tab="scheduler">⏰ Scheduler</button>
-      <button class="tab" data-tab="settings">⚙️ ตั้งค่า</button>
-      <button class="tab" data-tab="history">📋 ประวัติ</button>
+      <button class="tab active" data-path="/">📊 Dashboard</button>
+      <button class="tab" data-path="/upload">📤 อัปโหลด</button>
+      <button class="tab" data-path="/tiktok">🎵 TikTok</button>
+      <button class="tab" data-path="/files">📁 ไฟล์</button>
+      <button class="tab" data-path="/queue">🔄 คิว</button>
+      <button class="tab" data-path="/scheduler">⏰ Scheduler</button>
+      <button class="tab" data-path="/settings">⚙️ ตั้งค่า</button>
+      <button class="tab" data-path="/history">📋 ประวัติ</button>
     </nav>
 
-    <!-- Status Bar (always visible) -->
+    <!-- Status Bar -->
     <div id="status-bar" class="status-bar">
       <div class="status-bar-item" id="sb-connection">
         <span class="sb-dot connected"></span>
-        <span class="sb-text">เชื่อมต่อแล้ว</span>
+        <span class="sb-text">เชื่อมต่อ</span>
       </div>
       <div class="status-bar-item" id="sb-queue">
         <span class="sb-icon">🔄</span>
-        <span class="sb-text">คิว: 0</span>
+        <span class="sb-text">คิวว่าง</span>
       </div>
       <div class="status-bar-item" id="sb-uptime">
         <span class="sb-icon">⏱️</span>
@@ -50,272 +51,16 @@
         <span class="sb-icon">💚</span>
         <span class="sb-text">ปกติ</span>
       </div>
-      <button class="status-bar-btn" onclick="runCleanup()" title="ล้าง temp files">🧹</button>
+      <button class="status-bar-btn" onclick="runCleanup()" title="ล้าง temp">🧹</button>
     </div>
 
-    <!-- Dashboard Tab -->
-    <section id="tab-dashboard" class="tab-content active">
-      <div class="dashboard-grid">
-        <div class="stat-card">
-          <div class="stat-icon">📤</div>
-          <div class="stat-value" id="stat-total-uploads">0</div>
-          <div class="stat-label">อัปโหลดทั้งหมด</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">💾</div>
-          <div class="stat-value" id="stat-total-size">0 B</div>
-          <div class="stat-label">ขนาดรวม</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">✅</div>
-          <div class="stat-value" id="stat-success-rate">0%</div>
-          <div class="stat-label">อัตราสำเร็จ</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon">📅</div>
-          <div class="stat-value" id="stat-today">0</div>
-          <div class="stat-label">อัปโหลดวันนี้</div>
-        </div>
-      </div>
-
-      <div class="dashboard-sections">
-        <div class="dashboard-section">
-          <h3>📈 กราฟ 7 วันย้อนหลัง</h3>
-          <div id="chart-7days" class="chart-container"></div>
-        </div>
-
-        <div class="dashboard-section">
-          <h3>🕐 การอัปโหลดตามชั่วโมง</h3>
-          <div id="chart-hours" class="chart-container"></div>
-        </div>
-
-        <div class="dashboard-section">
-          <h3>🔄 สถานะคิว</h3>
-          <div id="dashboard-queue" class="queue-mini"></div>
-        </div>
-
-        <div class="dashboard-section">
-          <h3>📋 อัปโหลดล่าสุด</h3>
-          <div id="dashboard-recent"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Drop Zone Tab -->
-    <section id="tab-drop" class="tab-content">
-      <div id="drop-zone" class="drop-zone">
-        <div class="drop-zone-content">
-          <div class="drop-icon">📤</div>
-          <h2>ลากไฟล์วิดีโอวางที่นี่</h2>
-          <p>หรือคลิกเพื่อเลือกไฟล์</p>
-          <p class="drop-formats">รองรับ: MP4, AVI, MOV, MKV, WMV, FLV, WEBM</p>
-          <input type="file" id="file-input" multiple accept="video/*" style="display:none">
-        </div>
-      </div>
-
-      <div id="drop-queue" class="drop-queue" style="display:none;">
-        <h3>📋 คิวอัปโหลด</h3>
-        <div id="drop-queue-list"></div>
-        <div class="drop-queue-actions">
-          <button id="btn-upload-queue" class="btn btn-primary">🚀 อัปโหลดทั้งหมดไป YouTube</button>
-          <button id="btn-clear-queue" class="btn btn-secondary">🗑️ ล้างคิว</button>
-        </div>
-      </div>
-
-      <div id="drop-progress" class="progress-container" style="display:none;">
-        <div class="progress-info">
-          <span id="drop-progress-text">กำลังอัปโหลด...</span>
-          <span id="drop-progress-count">0/0</span>
-        </div>
-        <div class="progress-bar">
-          <div id="drop-progress-fill" class="progress-fill"></div>
-        </div>
-        <p id="drop-progress-file" class="progress-file"></p>
-      </div>
-
-      <div id="drop-results" class="drop-results" style="display:none;"></div>
-    </section>
-
-    <!-- TikTok Tab -->
-    <section id="tab-tiktok" class="tab-content">
-      <div class="tiktok-section">
-        <div class="tiktok-search">
-          <h3>🎵 TikTok → YouTube</h3>
-          <p class="section-desc">ค้นหาวิดีโอจาก TikTok ด้วยคีย์เวิร์ด ดาวน์โหลดแบบไม่มีลายน้ำ แล้วอัปโหลดไป YouTube อัตโนมัติ</p>
-          
-          <div class="search-box">
-            <input type="text" id="tiktok-keyword" placeholder="ค้นหา เช่น: แมวน่ารัก, cooking tips, travel vlog..." class="search-input">
-            <button id="btn-tiktok-search" class="btn btn-primary">🔍 ค้นหา</button>
-          </div>
-
-          <div class="tiktok-url-box">
-            <p class="divider-text">หรือวาง URL วิดีโอ TikTok โดยตรง</p>
-            <div class="url-input-row">
-              <input type="text" id="tiktok-url" placeholder="https://www.tiktok.com/@user/video/..." class="search-input">
-              <button id="btn-tiktok-download-url" class="btn btn-secondary btn-sm">⬇️ โหลดเก็บ</button>
-              <button id="btn-tiktok-download-upload-url" class="btn btn-primary btn-sm">🚀 โหลด+อัป YouTube</button>
-            </div>
-          </div>
-        </div>
-
-        <div id="tiktok-loading" class="loading-state" style="display:none;">
-          <div class="spinner"></div>
-          <p>กำลังค้นหาวิดีโอ...</p>
-        </div>
-
-        <div id="tiktok-results" class="tiktok-results" style="display:none;">
-          <div class="tiktok-results-header">
-            <h3>ผลการค้นหา: <span id="tiktok-result-keyword"></span></h3>
-            <div class="tiktok-batch-actions">
-              <button id="btn-tiktok-select-all" class="btn btn-secondary btn-sm">☑️ เลือกทั้งหมด</button>
-              <button id="btn-tiktok-batch-upload" class="btn btn-primary btn-sm">🚀 อัปโหลดที่เลือก</button>
-            </div>
-          </div>
-          <div id="tiktok-video-list" class="tiktok-video-list"></div>
-        </div>
-
-        <div id="tiktok-progress" class="progress-container" style="display:none;">
-          <div class="progress-info">
-            <span id="tiktok-progress-text">กำลังดำเนินการ...</span>
-            <span id="tiktok-progress-count">0/0</span>
-          </div>
-          <div class="progress-bar">
-            <div id="tiktok-progress-fill" class="progress-fill"></div>
-          </div>
-          <p id="tiktok-progress-file" class="progress-file"></p>
-          <p id="tiktok-progress-phase" class="progress-phase"></p>
-        </div>
-
-        <div id="tiktok-batch-results" class="drop-results" style="display:none;"></div>
-      </div>
-    </section>
-
-    <!-- Files Tab -->
-    <section id="tab-files" class="tab-content">
-      <div class="toolbar">
-        <button id="btn-refresh" class="btn btn-secondary">🔄 รีเฟรช</button>
-        <button id="btn-upload-all" class="btn btn-primary">🚀 อัปโหลดทั้งหมด</button>
-        <span id="files-total-size" class="toolbar-info"></span>
-      </div>
-
-      <div id="progress-bar" class="progress-container" style="display:none;">
-        <div class="progress-info">
-          <span id="progress-text">กำลังอัปโหลด...</span>
-          <span id="progress-count">0/0</span>
-        </div>
-        <div class="progress-bar">
-          <div id="progress-fill" class="progress-fill"></div>
-        </div>
-        <p id="progress-file" class="progress-file"></p>
-      </div>
-
-      <div id="file-list" class="file-list">
-        <p class="empty-state">⚙️ กรุณาตั้งค่าโฟลเดอร์ก่อนใช้งาน</p>
-      </div>
-    </section>
-
-    <!-- Queue Tab -->
-    <section id="tab-queue" class="tab-content">
-      <div class="toolbar">
-        <button id="btn-queue-pause" class="btn btn-secondary">⏸️ หยุดคิว</button>
-        <button id="btn-queue-resume" class="btn btn-primary">▶️ เริ่มคิว</button>
-        <button id="btn-queue-clear" class="btn btn-danger">🗑️ ล้างคิว</button>
-      </div>
-      <div id="queue-stats" class="queue-stats"></div>
-      <div id="queue-list" class="queue-list">
-        <p class="empty-state">ไม่มีรายการในคิว</p>
-      </div>
-    </section>
-
-    <!-- Scheduler Tab -->
-    <section id="tab-scheduler" class="tab-content">
-      <div class="settings-form">
-        <h3>⏰ ตั้งค่า Auto Scheduler</h3>
-        <p class="section-desc">ระบบจะสแกนโฟลเดอร์ตามเวลาที่กำหนด และอัปโหลดไฟล์ใหม่อัตโนมัติ</p>
-
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="scheduler-enabled">
-            <span>🟢 เปิดใช้งาน Auto Scheduler</span>
-          </label>
-        </div>
-
-        <div class="form-group">
-          <label for="scheduler-interval">⏱️ ช่วงเวลาสแกน (นาที)</label>
-          <input type="number" id="scheduler-interval" min="5" max="1440" value="30">
-          <small>ระบบจะสแกนโฟลเดอร์ทุกๆ X นาที เพื่อหาไฟล์ใหม่</small>
-        </div>
-
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="scheduler-watch" checked>
-            <span>👁️ เปิด Folder Watch (ตรวจจับไฟล์ใหม่ทันที)</span>
-          </label>
-          <small>ตรวจจับไฟล์วิดีโอใหม่ในโฟลเดอร์แบบ real-time</small>
-        </div>
-
-        <div class="scheduler-actions">
-          <button id="btn-scheduler-save" class="btn btn-primary">💾 บันทึก</button>
-          <button id="btn-scheduler-scan" class="btn btn-secondary">🔍 สแกนตอนนี้</button>
-        </div>
-
-        <div id="scheduler-status" class="scheduler-status"></div>
-      </div>
-    </section>
-
-    <!-- Settings Tab -->
-    <section id="tab-settings" class="tab-content">
-      <form id="settings-form" class="settings-form">
-        <div class="form-group">
-          <label for="folder">📁 โฟลเดอร์วิดีโอ (path เต็ม)</label>
-          <input type="text" id="folder" name="folder" placeholder="/Users/you/Videos/youtube" required>
-          <small>ระบุ path ของโฟลเดอร์ที่เก็บวิดีโอที่ต้องการอัปโหลด</small>
-        </div>
-
-        <div class="form-group">
-          <label for="privacy">🔒 ระดับความเป็นส่วนตัว</label>
-          <select id="privacy" name="privacy">
-            <option value="public">🌐 สาธารณะ (Public)</option>
-            <option value="unlisted">🔗 ไม่แสดงในรายการ (Unlisted)</option>
-            <option value="private">🔒 ส่วนตัว (Private)</option>
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="deleteAfterUpload" name="deleteAfterUpload">
-            🗑️ ลบไฟล์หลังอัปโหลดสำเร็จ
-          </label>
-          <small>เมื่อเปิดใช้งาน ไฟล์วิดีโอจะถูกลบหลังอัปโหลดขึ้น YouTube สำเร็จ</small>
-        </div>
-
-        <div class="form-group">
-          <label for="defaultDescription">📝 คำอธิบายเริ่มต้น</label>
-          <textarea id="defaultDescription" name="defaultDescription" rows="3" placeholder="คำอธิบายวิดีโอ..."></textarea>
-        </div>
-
-        <div class="form-group">
-          <label for="defaultTags">🏷️ แท็กเริ่มต้น (คั่นด้วยคอมม่า)</label>
-          <input type="text" id="defaultTags" name="defaultTags" placeholder="vlog, thailand, daily">
-        </div>
-
-        <button type="submit" class="btn btn-primary">💾 บันทึกการตั้งค่า</button>
-      </form>
-    </section>
-
-    <!-- History Tab -->
-    <section id="tab-history" class="tab-content">
-      <div class="toolbar">
-        <button id="btn-clear-history" class="btn btn-danger">🗑️ ล้างประวัติ</button>
-        <span id="history-count" class="toolbar-info"></span>
-      </div>
-      <div id="history-list" class="history-list">
-        <p class="empty-state">ยังไม่มีประวัติการอัปโหลด</p>
-      </div>
-    </section>
+    <!-- Page Content (loaded dynamically per route) -->
+    <main id="page-content" class="page-content">
+      <p class="empty-state">กำลังโหลด...</p>
+    </main>
   </div>
 
-  <!-- Upload Modal -->
+  <!-- Upload Modal (shared across pages) -->
   <div id="upload-modal" class="modal" style="display:none;">
     <div class="modal-content">
       <h3>📤 อัปโหลดวิดีโอ</h3>
@@ -330,39 +75,34 @@
           <textarea id="upload-description" rows="3"></textarea>
         </div>
         <div class="form-group">
-          <label for="upload-tags">แท็ก (คั่นด้วยคอมม่า)</label>
-          <input type="text" id="upload-tags">
+          <label for="upload-tags">แท็ก</label>
+          <input type="text" id="upload-tags" placeholder="คั่นด้วยคอมม่า">
         </div>
         <div class="form-group">
           <label for="upload-privacy">ความเป็นส่วนตัว</label>
           <select id="upload-privacy">
             <option value="public">🌐 สาธารณะ</option>
-            <option value="unlisted">🔗 ไม่แสดงในรายการ</option>
+            <option value="unlisted">� ไม่แสดงในรายการ</option>
             <option value="private">🔒 ส่วนตัว</option>
           </select>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" onclick="closeModal()">ยกเลิก</button>
-          <button type="submit" class="btn btn-primary">🚀 อัปโหลด</button>
+          <button type="submit" class="btn btn-primary">� อัปโหลด</button>
         </div>
       </form>
     </div>
   </div>
 
-  <!-- Toast Container -->
-  <div id="toast-container"></div>
-
-  <!-- Keyboard Shortcuts Help -->
+  <!-- Keyboard Shortcuts Modal -->
   <div id="shortcuts-modal" class="modal" style="display:none;">
     <div class="modal-content">
-      <h3>⌨️ คีย์ลัด (Keyboard Shortcuts)</h3>
+      <h3>⌨️ คีย์ลัด</h3>
       <div class="shortcuts-grid">
-        <div class="shortcut-item"><kbd>1</kbd>-<kbd>8</kbd> <span>สลับแท็บ</span></div>
-        <div class="shortcut-item"><kbd>R</kbd> <span>รีเฟรชไฟล์</span></div>
-        <div class="shortcut-item"><kbd>U</kbd> <span>อัปโหลดทั้งหมด</span></div>
-        <div class="shortcut-item"><kbd>S</kbd> <span>สแกนโฟลเดอร์</span></div>
-        <div class="shortcut-item"><kbd>?</kbd> <span>แสดง/ซ่อนคีย์ลัด</span></div>
-        <div class="shortcut-item"><kbd>Esc</kbd> <span>ปิด modal</span></div>
+        <div class="shortcut-item"><kbd>1</kbd>-<kbd>8</kbd> <span>สลับหน้า</span></div>
+        <div class="shortcut-item"><kbd>R</kbd> <span>รีเฟรช</span></div>
+        <div class="shortcut-item"><kbd>?</kbd> <span>คีย์ลัด</span></div>
+        <div class="shortcut-item"><kbd>Esc</kbd> <span>ปิด</span></div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-secondary" onclick="document.getElementById('shortcuts-modal').style.display='none'">ปิด</button>
@@ -370,6 +110,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
