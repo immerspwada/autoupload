@@ -7,6 +7,52 @@ const youtubeService = require('../services/youtube');
 const { settings, uploads } = require('../utils/store');
 const logger = require('../utils/logger');
 
+// ==================== Duplicate Detection ====================
+
+/**
+ * Extract TikTok video ID from various URL formats
+ */
+function extractTikTokVideoId(url) {
+  if (!url) return null;
+  // Match /video/DIGITS or /photo/DIGITS
+  const match = url.match(/\/(video|photo)\/(\d+)/);
+  if (match) return match[2];
+  // Short link - extract last segment
+  const shortMatch = url.match(/\/([A-Za-z0-9]+)\/?$/);
+  if (shortMatch) return shortMatch[1];
+  return null;
+}
+
+/**
+ * Check if a TikTok video has already been uploaded to YouTube
+ * Checks by: source_url, tiktok_video_id, or title similarity
+ */
+function isDuplicateTikTok(videoUrl, videoId) {
+  const allUploads = uploads.load();
+
+  for (const record of allUploads) {
+    // Check 1: Exact source URL match
+    if (record.source_url && record.source_url === videoUrl) {
+      return { duplicate: true, reason: 'exact_url', record };
+    }
+
+    // Check 2: TikTok video ID match (from source_url in history)
+    if (record.source_url && videoId) {
+      const existingId = extractTikTokVideoId(record.source_url);
+      if (existingId && existingId === videoId) {
+        return { duplicate: true, reason: 'video_id', record };
+      }
+    }
+
+    // Check 3: tiktok_video_id field match
+    if (record.tiktok_video_id && record.tiktok_video_id === videoId) {
+      return { duplicate: true, reason: 'stored_id', record };
+    }
+  }
+
+  return { duplicate: false };
+}
+
 // ==================== TikTok Batch Progress (SSE) ====================
 let tiktokProgress = { current: 0, total: 0, currentFile: '', status: 'idle', phase: '', results: [] };
 
@@ -17,11 +63,40 @@ router.post('/search', async (req, res) => {
 
   try {
     const videos = await tiktokService.searchVideos(keyword, count || 12);
-    res.json({ videos, keyword });
+
+    // Mark duplicates in search results
+    const videosWithDuplicateInfo = videos.map(video => {
+      const videoId = extractTikTokVideoId(video.videoUrl);
+      const dupCheck = isDuplicateTikTok(video.videoUrl, videoId);
+      return {
+        ...video,
+        alreadyUploaded: dupCheck.duplicate,
+        youtubeUrl: dupCheck.duplicate ? dupCheck.record.youtube_url : null,
+        uploadedAt: dupCheck.duplicate ? dupCheck.record.uploaded_at : null
+      };
+    });
+
+    res.json({ videos: videosWithDuplicateInfo, keyword });
   } catch (error) {
     logger.error('TikTok search error', { error: error.message });
     res.status(500).json({ error: error.message });
   }
+});
+
+// Check if a TikTok URL is a duplicate
+router.post('/check-duplicate', (req, res) => {
+  const { videoUrl } = req.body;
+  if (!videoUrl) return res.status(400).json({ error: 'กรุณาระบุ URL' });
+
+  const videoId = extractTikTokVideoId(videoUrl);
+  const result = isDuplicateTikTok(videoUrl, videoId);
+
+  res.json({
+    duplicate: result.duplicate,
+    reason: result.reason || null,
+    youtubeUrl: result.duplicate ? result.record.youtube_url : null,
+    uploadedAt: result.duplicate ? result.record.uploaded_at : null
+  });
 });
 
 // Download TikTok video without watermark
@@ -40,12 +115,26 @@ router.post('/download', async (req, res) => {
 
 // Download and immediately upload to YouTube
 router.post('/download-and-upload', async (req, res) => {
-  const { videoUrl, title, description, tags, privacy, filename } = req.body;
+  const { videoUrl, title, description, tags, privacy, filename, force } = req.body;
   if (!videoUrl) return res.status(400).json({ error: 'กรุณาระบุ URL ของวิดีโอ' });
 
   const authStatus = youtubeService.isAuthenticated();
   if (!authStatus.authenticated) {
     return res.status(401).json({ error: 'ยังไม่ได้เชื่อมต่อ YouTube' });
+  }
+
+  // Duplicate check (skip if force=true)
+  if (!force) {
+    const videoId = extractTikTokVideoId(videoUrl);
+    const dupCheck = isDuplicateTikTok(videoUrl, videoId);
+    if (dupCheck.duplicate) {
+      return res.status(409).json({
+        error: 'วิดีโอนี้เคยอัปโหลดไป YouTube แล้ว',
+        duplicate: true,
+        youtubeUrl: dupCheck.record.youtube_url,
+        uploadedAt: dupCheck.record.uploaded_at
+      });
+    }
   }
 
   try {
@@ -67,7 +156,8 @@ router.post('/download-and-upload', async (req, res) => {
       privacy: videoPrivacy
     });
 
-    // Save to upload history
+    // Save to upload history with TikTok video ID for future duplicate detection
+    const tiktokVideoId = extractTikTokVideoId(videoUrl);
     const allUploads = uploads.load();
     allUploads.push({
       filename: downloadResult.filename,
@@ -77,6 +167,7 @@ router.post('/download-and-upload', async (req, res) => {
       uploaded_at: new Date().toISOString(),
       source: 'tiktok',
       source_url: videoUrl,
+      tiktok_video_id: tiktokVideoId,
       deleted: true
     });
     uploads.save(allUploads);
@@ -148,6 +239,20 @@ async function processTikTokBatch(videos, options) {
     tiktokProgress.current = i + 1;
     tiktokProgress.currentFile = video.title || video.desc || `วิดีโอ ${i + 1}`;
 
+    // Duplicate check before processing
+    const videoId = extractTikTokVideoId(video.videoUrl);
+    const dupCheck = isDuplicateTikTok(video.videoUrl, videoId);
+    if (dupCheck.duplicate) {
+      logger.info(`Skipping duplicate TikTok video`, { videoUrl: video.videoUrl, youtubeUrl: dupCheck.record.youtube_url });
+      tiktokProgress.results.push({
+        title: video.title || `วิดีโอ ${i + 1}`,
+        success: false,
+        skipped: true,
+        error: `ซ้ำ — เคยอัปแล้ว: ${dupCheck.record.youtube_url}`
+      });
+      continue;
+    }
+
     try {
       // Phase 1: Download
       tiktokProgress.phase = 'downloading';
@@ -165,7 +270,8 @@ async function processTikTokBatch(videos, options) {
         privacy
       });
 
-      // Save record
+      // Save record with tiktok_video_id
+      const tiktokVidId = extractTikTokVideoId(video.videoUrl);
       const allUploads = uploads.load();
       allUploads.push({
         filename: downloadResult.filename,
@@ -175,6 +281,7 @@ async function processTikTokBatch(videos, options) {
         uploaded_at: new Date().toISOString(),
         source: 'tiktok',
         source_url: video.videoUrl,
+        tiktok_video_id: tiktokVidId,
         deleted: true
       });
       uploads.save(allUploads);

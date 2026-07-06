@@ -466,9 +466,9 @@ function renderTikTokResults() {
   }
 
   list.innerHTML = tiktokSearchResults.map((video, idx) => `
-    <div class="tiktok-video-item" data-idx="${idx}">
+    <div class="tiktok-video-item ${video.alreadyUploaded ? 'already-uploaded' : ''}" data-idx="${idx}">
       <div class="tiktok-select">
-        <input type="checkbox" class="tiktok-checkbox" data-idx="${idx}">
+        <input type="checkbox" class="tiktok-checkbox" data-idx="${idx}" ${video.alreadyUploaded ? 'disabled' : ''}>
       </div>
       <div class="tiktok-thumb">
         ${video.cover ? `<img src="${video.cover}" alt="thumbnail" loading="lazy">` : '<div class="thumb-placeholder">🎬</div>'}
@@ -482,10 +482,14 @@ function renderTikTokResults() {
           <span>💬 ${formatCount(video.commentCount)}</span>
           ${video.duration ? `<span>⏱️ ${video.duration}s</span>` : ''}
         </div>
+        ${video.alreadyUploaded ? `<div class="tiktok-duplicate-badge">✅ อัปโหลดแล้ว${video.youtubeUrl ? ` — <a href="${video.youtubeUrl}" target="_blank">ดูบน YouTube</a>` : ''}</div>` : ''}
       </div>
       <div class="tiktok-video-actions">
-        <button class="btn btn-secondary btn-sm" onclick="downloadSingleTikTok(${idx})">⬇️ โหลด</button>
-        <button class="btn btn-primary btn-sm" onclick="downloadAndUploadSingleTikTok(${idx})">🚀 โหลด+อัป</button>
+        ${video.alreadyUploaded
+          ? `<span class="badge badge-success">ซ้ำ</span>`
+          : `<button class="btn btn-secondary btn-sm" onclick="downloadSingleTikTok(${idx})">⬇️ โหลด</button>
+             <button class="btn btn-primary btn-sm" onclick="downloadAndUploadSingleTikTok(${idx})">🚀 โหลด+อัป</button>`
+        }
       </div>
     </div>
   `).join('');
@@ -536,6 +540,10 @@ async function downloadAndUploadSingleTikTok(idx) {
     const data = await res.json();
     if (data.success) {
       showToast(`อัปโหลด YouTube สำเร็จ!`, 'success');
+      // Mark as uploaded in local results
+      video.alreadyUploaded = true;
+      video.youtubeUrl = data.youtubeUrl;
+      renderTikTokResults();
       // Show result link
       const resultsEl = document.getElementById('tiktok-batch-results');
       resultsEl.style.display = 'block';
@@ -544,6 +552,11 @@ async function downloadAndUploadSingleTikTok(idx) {
           ✅ <strong>${escapeHtml(title.substring(0, 50))}</strong> →
           <a href="${data.youtubeUrl}" target="_blank">${data.youtubeUrl}</a>
         </div>`;
+    } else if (data.duplicate) {
+      showToast(`⚠️ วิดีโอนี้เคยอัปแล้ว`, 'info');
+      video.alreadyUploaded = true;
+      video.youtubeUrl = data.youtubeUrl;
+      renderTikTokResults();
     } else {
       showToast(`ล้มเหลว: ${data.error}`, 'error');
     }
@@ -598,11 +611,21 @@ async function downloadAndUploadTikTokUrl() {
     const data = await res.json();
     if (data.success) {
       showToast('อัปโหลด YouTube สำเร็จ!', 'success');
+      document.getElementById('tiktok-url').value = '';
       const resultsEl = document.getElementById('tiktok-batch-results');
       resultsEl.style.display = 'block';
       resultsEl.innerHTML += `
         <div class="drop-result-item">
           ✅ <strong>${escapeHtml(data.filename)}</strong> →
+          <a href="${data.youtubeUrl}" target="_blank">${data.youtubeUrl}</a>
+        </div>`;
+    } else if (data.duplicate) {
+      showToast(`⚠️ วิดีโอนี้เคยอัปโหลดแล้ว`, 'info');
+      const resultsEl = document.getElementById('tiktok-batch-results');
+      resultsEl.style.display = 'block';
+      resultsEl.innerHTML += `
+        <div class="drop-result-item">
+          ⚠️ <strong>ซ้ำ</strong> — เคยอัปแล้ว:
           <a href="${data.youtubeUrl}" target="_blank">${data.youtubeUrl}</a>
         </div>`;
     } else {
@@ -614,7 +637,7 @@ async function downloadAndUploadTikTokUrl() {
 }
 
 function toggleSelectAllTikTok() {
-  const checkboxes = document.querySelectorAll('.tiktok-checkbox');
+  const checkboxes = document.querySelectorAll('.tiktok-checkbox:not(:disabled)');
   const allChecked = Array.from(checkboxes).every(cb => cb.checked);
   checkboxes.forEach(cb => cb.checked = !allChecked);
 }
@@ -1128,3 +1151,38 @@ document.addEventListener('DOMContentLoaded', () => {
   // Refresh health every 30s as fallback
   setInterval(loadHealthStatus, 30000);
 });
+
+// ==================== EVENT BUS NOTIFICATIONS ====================
+// Handle server-pushed notifications from the Rules Engine
+function handleNotification(data) {
+  // Show toast based on level
+  showToast(`${data.title}: ${data.message}`, data.level === 'error' ? 'error' : data.level === 'success' ? 'success' : 'info');
+
+  // Desktop notification for important ones
+  if (data.level === 'error' || data.level === 'success') {
+    sendDesktopNotification(data.title, data.message);
+  }
+}
+
+// Handle dashboard refresh command from EventBus
+function handleDashboardRefresh(data) {
+  // Only refresh if dashboard is currently visible
+  const dashboardTab = document.querySelector('.tab[data-tab="dashboard"]');
+  if (dashboardTab && dashboardTab.classList.contains('active')) {
+    loadDashboard();
+  }
+}
+
+// Enhanced WS message handler — add notification + dashboard refresh support
+const _origHandleWSMessage2 = handleWSMessage;
+handleWSMessage = function(type, data) {
+  if (type === 'notification') {
+    handleNotification(data);
+    return;
+  }
+  if (type === 'dashboard:refresh') {
+    handleDashboardRefresh(data);
+    return;
+  }
+  _origHandleWSMessage2(type, data);
+};

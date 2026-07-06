@@ -11,6 +11,8 @@ const youtubeService = require('./src/services/youtube');
 const uploadQueue = require('./src/services/queue');
 const scheduler = require('./src/services/scheduler');
 const healthService = require('./src/services/health');
+const orchestrator = require('./src/services/orchestrator');
+const eventBus = require('./src/services/eventbus');
 
 // Routes
 const authRoutes = require('./src/routes/auth');
@@ -60,12 +62,10 @@ function broadcast(type, data) {
   });
 }
 
-// Wire up queue events to WebSocket
-uploadQueue.on('progress', (status) => broadcast('queue:progress', status));
-uploadQueue.on('completed', (data) => broadcast('queue:completed', data));
-uploadQueue.on('failed', (data) => broadcast('queue:failed', data));
-uploadQueue.on('retry', (data) => broadcast('queue:retry', data));
-uploadQueue.on('drain', (status) => broadcast('queue:done', status));
+// Wire up all services via Orchestrator (central event bus)
+orchestrator.init(broadcast);
+
+// Remove legacy direct queue→websocket wiring since orchestrator handles it
 
 // ==================== Middleware ====================
 app.use(express.json());
@@ -81,6 +81,16 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/tiktok', tiktokRoutes);
 app.use('/api/health', healthRoutes);
 
+// Event Bus API
+app.get('/api/events/history', (req, res) => {
+  const limit = parseInt(req.query.limit) || 50;
+  res.json(orchestrator.getEventHistory(limit));
+});
+
+app.get('/api/events/rules', (req, res) => {
+  res.json(orchestrator.getRules());
+});
+
 // Legacy routes compatibility (so existing frontend still works while we upgrade)
 app.get('/api/settings', (req, res) => {
   const { settings } = require('./src/utils/store');
@@ -90,7 +100,9 @@ app.get('/api/settings', (req, res) => {
 app.post('/api/settings', (req, res) => {
   const { settings } = require('./src/utils/store');
   const current = settings.load();
-  settings.save({ ...current, ...req.body });
+  const updated = { ...current, ...req.body };
+  settings.save(updated);
+  orchestrator.onSettingsUpdated(updated);
   res.json({ success: true });
 });
 
@@ -153,6 +165,7 @@ app.get('/oauth2callback', async (req, res) => {
   const { code } = req.query;
   try {
     await youtubeService.handleCallback(code);
+    orchestrator.onAuthLogin();
     res.redirect('/?auth=success');
   } catch (error) {
     logger.error('OAuth callback error', { error: error.message });

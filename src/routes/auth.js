@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const youtubeService = require('../services/youtube');
+const orchestrator = require('../services/orchestrator');
 const logger = require('../utils/logger');
 
 // Auth status
@@ -24,6 +25,7 @@ router.get('/login', (req, res) => {
 // Logout
 router.post('/logout', (req, res) => {
   youtubeService.logout();
+  orchestrator.onAuthLogout();
   res.json({ success: true });
 });
 

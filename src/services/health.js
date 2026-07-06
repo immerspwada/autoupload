@@ -35,7 +35,7 @@ class HealthService {
     if (!checks.youtube.connected) checks.overall = 'warning';
     if (checks.queue.failed > 0) checks.overall = 'warning';
     if (checks.disk && checks.disk.percentUsed > 90) checks.overall = 'critical';
-    if (checks.folder && !checks.folder.accessible) checks.overall = 'error';
+    if (checks.folder && checks.folder.configured && !checks.folder.accessible) checks.overall = 'warning';
 
     return checks;
   }

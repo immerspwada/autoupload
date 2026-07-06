@@ -551,3 +551,22 @@ header h1 { font-size: 1.75rem; font-weight: 700; color: var(--text-primary); le
   min-width: 24px;
   text-align: center;
 }
+
+/* ===== DUPLICATE INDICATOR ===== */
+.tiktok-video-item.already-uploaded {
+  opacity: 0.6;
+  border-color: rgba(0,200,83,0.3);
+  background: rgba(0,200,83,0.03);
+}
+.tiktok-video-item.already-uploaded:hover { opacity: 0.8; }
+.tiktok-duplicate-badge {
+  margin-top: 5px;
+  font-size: 0.72rem;
+  color: var(--success);
+  font-weight: 500;
+}
+.tiktok-duplicate-badge a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.tiktok-duplicate-badge a:hover { text-decoration: underline; }
