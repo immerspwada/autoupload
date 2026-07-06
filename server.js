@@ -21,6 +21,7 @@ const uploadRoutes = require('./src/routes/upload');
 const statsRoutes = require('./src/routes/stats');
 const tiktokRoutes = require('./src/routes/tiktok');
 const healthRoutes = require('./src/routes/health');
+const seoRoutes = require('./src/routes/seo');
 
 const app = express();
 const server = http.createServer(app);
@@ -80,6 +81,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/tiktok', tiktokRoutes);
 app.use('/api/health', healthRoutes);
+app.use('/api/seo', seoRoutes);
 
 // Event Bus API
 app.get('/api/events/history', (req, res) => {

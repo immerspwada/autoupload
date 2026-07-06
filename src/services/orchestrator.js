@@ -171,17 +171,26 @@ class Orchestrator {
       const hour = new Date().getHours().toString();
 
       if (!allStats.dailyStats) allStats.dailyStats = {};
-      if (!allStats.dailyStats[today]) allStats.dailyStats[today] = { uploads: 0, failures: 0, size: 0 };
+      if (!allStats.dailyStats[today]) allStats.dailyStats[today] = { uploads: 0, failures: 0, size: 0, tiktok: 0 };
       if (!allStats.uploadsByHour) allStats.uploadsByHour = {};
+      if (!allStats.sourceStats) allStats.sourceStats = { tiktok: 0, folder: 0, drop: 0 };
 
       if (payload.type === 'upload') {
         allStats.totalUploads = (allStats.totalUploads || 0) + 1;
         allStats.totalSize = (allStats.totalSize || 0) + (payload.size || 0);
         allStats.dailyStats[today].uploads++;
         allStats.dailyStats[today].size += (payload.size || 0);
+        // Track by source
+        if (payload.source && allStats.sourceStats[payload.source] !== undefined) {
+          allStats.sourceStats[payload.source]++;
+        }
       } else if (payload.type === 'failure') {
         allStats.failedUploads = (allStats.failedUploads || 0) + 1;
         allStats.dailyStats[today].failures++;
+      } else if (payload.type === 'tiktok_upload') {
+        // TikTok-specific tracking
+        allStats.sourceStats.tiktok = (allStats.sourceStats.tiktok || 0) + 1;
+        allStats.dailyStats[today].tiktok = (allStats.dailyStats[today].tiktok || 0) + 1;
       }
 
       allStats.uploadsByHour[hour] = (allStats.uploadsByHour[hour] || 0) + 1;

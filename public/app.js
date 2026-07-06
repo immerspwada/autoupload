@@ -9,6 +9,7 @@ const ROUTES = {
   '/dashboard': () => import('./pages/dashboard.js'),
   '/upload':    () => import('./pages/upload.js'),
   '/tiktok':    () => import('./pages/tiktok.js'),
+  '/seo':       () => import('./pages/seo.js'),
   '/files':     () => import('./pages/files.js'),
   '/queue':     () => import('./pages/queue.js'),
   '/scheduler': () => import('./pages/scheduler.js'),
@@ -202,8 +203,8 @@ document.getElementById('upload-form').addEventListener('submit', async (e) => {
 // ==================== KEYBOARD SHORTCUTS ====================
 document.addEventListener('keydown', (e) => {
   if (['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
-  const paths = ['/','/upload','/tiktok','/files','/queue','/scheduler','/settings','/history'];
-  if (e.key >= '1' && e.key <= '8') { e.preventDefault(); navigate(paths[parseInt(e.key)-1]); return; }
+  const paths = ['/','/upload','/tiktok','/seo','/files','/queue','/scheduler','/settings','/history'];
+  if (e.key >= '1' && e.key <= '9') { e.preventDefault(); navigate(paths[parseInt(e.key)-1]); return; }
   switch (e.key.toLowerCase()) {
     case 'r': e.preventDefault(); if (window.filesPage) window.filesPage.reload(); showToast('🔄','info'); break;
     case '?': e.preventDefault(); const m=document.getElementById('shortcuts-modal'); m.style.display=m.style.display==='none'?'flex':'none'; break;

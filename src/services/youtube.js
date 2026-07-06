@@ -82,7 +82,7 @@ class YouTubeService {
     logger.info('Logged out from YouTube');
   }
 
-  async uploadVideo({ filepath, title, description, tags, privacy, onProgress }) {
+  async uploadVideo({ filepath, title, description, tags, privacy, categoryId, publishAt, madeForKids, onProgress }) {
     const client = this.getOAuth2Client();
     if (!client || !client.credentials || !client.credentials.access_token) {
       throw new Error('Not authenticated with YouTube');
@@ -91,21 +91,35 @@ class YouTubeService {
     const youtube = google.youtube({ version: 'v3', auth: client });
     const fileSize = fs.statSync(filepath).size;
 
-    logger.info('Starting upload', { title, filepath, size: fileSize });
+    logger.info('Starting upload', { title, filepath, size: fileSize, categoryId, publishAt });
+
+    // Build request body
+    const requestBody = {
+      snippet: {
+        title,
+        description: description || '',
+        tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim())) : [],
+        categoryId: categoryId ? String(categoryId) : '22', // Default: People & Blogs
+        defaultLanguage: 'th',
+        defaultAudioLanguage: 'th'
+      },
+      status: {
+        privacyStatus: publishAt ? 'private' : (privacy || 'public'),
+        selfDeclaredMadeForKids: madeForKids || false,
+        embeddable: true,
+        publicStatsViewable: true
+      }
+    };
+
+    // If scheduled publish, set publishAt (video must be private first)
+    if (publishAt) {
+      requestBody.status.privacyStatus = 'private';
+      requestBody.status.publishAt = publishAt;
+    }
 
     const response = await youtube.videos.insert({
       part: 'snippet,status',
-      requestBody: {
-        snippet: {
-          title,
-          description: description || '',
-          tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim())) : []
-        },
-        status: {
-          privacyStatus: privacy || 'public',
-          selfDeclaredMadeForKids: false
-        }
-      },
+      requestBody,
       media: {
         body: fs.createReadStream(filepath)
       }
@@ -121,9 +135,9 @@ class YouTubeService {
     const videoId = response.data.id;
     const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
-    logger.info('Upload successful', { videoId, title });
+    logger.info('Upload successful', { videoId, title, categoryId, scheduled: !!publishAt });
 
-    return { videoId, youtubeUrl, title: response.data.snippet?.title };
+    return { videoId, youtubeUrl, title: response.data.snippet?.title, scheduled: !!publishAt };
   }
 
   async getChannelInfo() {

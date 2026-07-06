@@ -5,6 +5,7 @@ const router = express.Router();
 const fs = require('fs');
 const tiktokService = require('../services/tiktok');
 const youtubeService = require('../services/youtube');
+const seoService = require('../services/seo');
 const orchestrator = require('../services/orchestrator');
 const { settings, uploads } = require('../utils/store');
 const logger = require('../utils/logger');
@@ -143,19 +144,54 @@ router.post('/download-and-upload', async (req, res) => {
     // Step 1: Download from TikTok (no watermark)
     const downloadResult = await tiktokService.downloadNoWatermark(videoUrl, filename);
 
-    // Step 2: Upload to YouTube
+    // Step 2: Generate SEO-optimized metadata
     const config = settings.load();
-    const videoTitle = title || downloadResult.filename.replace('.mp4', '');
-    const videoPrivacy = privacy || config.privacy || 'public';
-    const videoDesc = description || config.defaultDescription || '';
-    const videoTags = tags || config.defaultTags || '';
+    const seoMode = config.seoMode || 'auto';
+    
+    let videoTitle, videoDesc, videoTags, videoPrivacy, categoryId, publishAt;
 
+    if (seoMode === 'auto' || seoMode === 'seo') {
+      // Use SEO service for optimized metadata
+      const tiktokData = {
+        desc: title || req.body.desc || downloadResult.filename.replace('.mp4', ''),
+        author: req.body.author || '',
+        duration: req.body.duration || 0,
+        videoUrl
+      };
+      const seoOptions = { schedulePublish: config.autoSchedule || false };
+      const metadata = seoService.generateMetadata(tiktokData, seoOptions);
+
+      videoTitle = title || metadata.title; // User override > SEO
+      videoDesc = description || metadata.description;
+      videoTags = tags || metadata.tags;
+      videoPrivacy = privacy || metadata.privacy;
+      categoryId = req.body.categoryId || metadata.categoryId;
+      publishAt = req.body.publishAt || metadata.publishAt;
+
+      logger.info('SEO metadata generated', { 
+        title: videoTitle, categoryId, 
+        tagsCount: Array.isArray(videoTags) ? videoTags.length : 0,
+        scheduled: !!publishAt 
+      });
+    } else {
+      // Manual mode — use raw values
+      videoTitle = title || downloadResult.filename.replace('.mp4', '');
+      videoDesc = description || config.defaultDescription || '';
+      videoTags = tags || config.defaultTags || '';
+      videoPrivacy = privacy || config.privacy || 'public';
+      categoryId = req.body.categoryId || '22';
+      publishAt = null;
+    }
+
+    // Step 3: Upload to YouTube with optimized metadata
     const result = await youtubeService.uploadVideo({
       filepath: downloadResult.filepath,
       title: videoTitle,
       description: videoDesc,
       tags: videoTags,
-      privacy: videoPrivacy
+      privacy: videoPrivacy,
+      categoryId,
+      publishAt
     });
 
     // Save to upload history with TikTok video ID for future duplicate detection
@@ -241,6 +277,7 @@ async function processTikTokBatch(videos, options) {
   const privacy = options.privacy || config.privacy || 'public';
   const defaultDesc = options.description || config.defaultDescription || '';
   const defaultTags = options.tags || config.defaultTags || '';
+  const seoMode = config.seoMode || 'auto';
 
   tiktokProgress = { current: 0, total: videos.length, currentFile: '', status: 'processing', phase: '', results: [] };
 
@@ -268,16 +305,38 @@ async function processTikTokBatch(videos, options) {
       tiktokProgress.phase = 'downloading';
       const downloadResult = await tiktokService.downloadNoWatermark(video.videoUrl, video.title);
 
-      // Phase 2: Upload to YouTube
+      // Phase 2: Generate SEO metadata
+      let videoTitle, videoDesc, videoTags, categoryId, publishAt;
+
+      if (seoMode === 'auto' || seoMode === 'seo') {
+        const tiktokData = {
+          desc: video.title || video.desc || downloadResult.filename.replace('.mp4', ''),
+          author: video.author || '',
+          duration: video.duration || 0,
+          videoUrl: video.videoUrl
+        };
+        const metadata = seoService.generateMetadata(tiktokData, { schedulePublish: false });
+        videoTitle = (video.title || metadata.title).substring(0, 100);
+        videoDesc = metadata.description;
+        videoTags = metadata.tags;
+        categoryId = metadata.categoryId;
+      } else {
+        videoTitle = (video.title || downloadResult.filename.replace('.mp4', '')).substring(0, 100);
+        videoDesc = defaultDesc;
+        videoTags = defaultTags;
+        categoryId = '22';
+      }
+
+      // Phase 3: Upload to YouTube
       tiktokProgress.phase = 'uploading';
-      const videoTitle = (video.title || downloadResult.filename.replace('.mp4', '')).substring(0, 100);
 
       const result = await youtubeService.uploadVideo({
         filepath: downloadResult.filepath,
         title: videoTitle,
-        description: defaultDesc,
-        tags: defaultTags,
-        privacy
+        description: videoDesc,
+        tags: videoTags,
+        privacy,
+        categoryId
       });
 
       // Save record with tiktok_video_id

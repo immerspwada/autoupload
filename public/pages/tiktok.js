@@ -85,7 +85,8 @@ function renderResults() {
       <div class="tiktok-video-actions">
         ${v.alreadyUploaded
           ?`<a href="${v.youtubeUrl}" target="_blank" class="btn btn-secondary btn-sm">🔗 YouTube</a>`
-          :`<button class="btn btn-primary btn-sm" onclick="window.tiktokPage.dlUp(${i})">🚀 โหลด+อัป</button>`}
+          :`<button class="btn btn-secondary btn-sm" onclick="window.tiktokPage.seoPreview(${i})">💎 SEO</button>
+            <button class="btn btn-primary btn-sm" onclick="window.tiktokPage.dlUp(${i})">🚀 โหลด+อัป</button>`}
       </div>
     </div>`).join('');
 }
@@ -163,4 +164,34 @@ function showResult(d) {
 
 function fmtCount(n) { if (!n) return '0'; if (n>=1e6) return (n/1e6).toFixed(1)+'M'; if (n>=1e3) return (n/1e3).toFixed(1)+'K'; return n.toString(); }
 
-window.tiktokPage = { dlUp: dlUpSingle };
+async function seoPreview(idx) {
+  const v = results[idx]; if (!v) return;
+  try {
+    const res = await fetch('/api/seo/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ desc: v.desc, author: v.author, duration: v.duration || 0 })
+    });
+    const data = await res.json();
+    if (!data.success) { window.app.showToast('SEO preview ล้มเหลว', 'error'); return; }
+
+    const items = document.querySelectorAll('.tiktok-video-item');
+    const el = items[idx];
+    if (!el) return;
+    let panel = el.querySelector('.seo-mini-preview');
+    if (panel) { panel.remove(); return; } // toggle off if already shown
+
+    panel = document.createElement('div');
+    panel.className = 'seo-mini-preview';
+    const tags = (data.metadata.tags || []).slice(0, 8);
+    const status = data.metadata.validation.status;
+    panel.innerHTML = `
+      <div class="seo-mini-title">📌 ${window.app.escapeHtml(data.metadata.title)}</div>
+      <div class="seo-mini-tags">${tags.map(t => `<span class="tag-chip-sm">${window.app.escapeHtml(t)}</span>`).join('')}</div>
+      <div class="seo-mini-cat">📂 ${window.app.escapeHtml(data.categoryName)} &nbsp; <span class="badge badge-${status==='ok'?'success':status==='warning'?'pending':'error'}">${status==='ok'?'✓ พร้อม monetize':status==='warning'?'⚠️ ควรปรับปรุง':'❌ มีปัญหา'}</span></div>`;
+    el.appendChild(panel);
+  } catch (err) {
+    window.app.showToast('SEO preview error: ' + err.message, 'error');
+  }
+}
+
+window.tiktokPage = { dlUp: dlUpSingle, seoPreview };

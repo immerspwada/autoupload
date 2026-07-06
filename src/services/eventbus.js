@@ -271,6 +271,41 @@ class EventBus extends EventEmitter {
         });
       }
     });
+
+    // ──────── RULE 11: Upload Completed → SEO Stats ────────
+    this.addRule({
+      id: 'upload_seo_track',
+      name: 'Upload Complete → Track SEO Performance',
+      when: 'upload:completed',
+      priority: 8,
+      then: (payload, bus) => {
+        // Track source-specific stats for revenue analysis
+        if (payload.source === 'tiktok') {
+          bus.dispatch('stats:increment', {
+            type: 'tiktok_upload',
+            filename: payload.filename,
+            size: payload.size || 0,
+            source: 'tiktok'
+          });
+        }
+      }
+    });
+
+    // ──────── RULE 12: SEO Validation Warning → Notify ────────
+    this.addRule({
+      id: 'seo_validation_warn',
+      name: 'SEO Validation Issue → Warn User',
+      when: 'seo:validation_issue',
+      priority: 5,
+      then: (payload, bus) => {
+        bus.dispatch('notification:send', {
+          level: payload.level || 'warning',
+          title: 'SEO Warning',
+          message: payload.message,
+          source: 'seo'
+        });
+      }
+    });
   }
 
   // ==================== QUERIES ====================
