@@ -1,4 +1,4 @@
-// Upload Routes
+// Upload Routes — ทุกเหตุการณ์ผ่าน EventBus เท่านั้น
 const express = require('express');
 const router = express.Router();
 const path = require('path');
@@ -6,7 +6,9 @@ const fs = require('fs');
 const multer = require('multer');
 const youtubeService = require('../services/youtube');
 const uploadQueue = require('../services/queue');
-const { settings, uploads, stats } = require('../utils/store');
+const healthService = require('../services/health');
+const orchestrator = require('../services/orchestrator');
+const { settings, uploads } = require('../utils/store');
 const logger = require('../utils/logger');
 
 const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.mpeg', '.mpg'];
@@ -36,10 +38,13 @@ const upload = multer({
     if (VIDEO_EXTENSIONS.includes(ext)) cb(null, true);
     else cb(new Error('ไม่รองรับไฟล์ประเภทนี้: ' + ext));
   },
-  limits: { fileSize: 128 * 1024 * 1024 * 1024 } // 128GB max
+  limits: { fileSize: 128 * 1024 * 1024 * 1024 }
 });
 
-// Upload single file from folder
+// ═══════════════════════════════════════════════════
+// DIRECT UPLOAD (ไม่ผ่าน Queue → route emit เอง)
+// กระบวนการ: Route → YouTube → Record → emit upload:completed
+// ═══════════════════════════════════════════════════
 router.post('/single', async (req, res) => {
   const { filename, title, description, tags, privacy } = req.body;
   const config = settings.load();
@@ -54,12 +59,21 @@ router.post('/single', async (req, res) => {
   const filepath = path.join(config.folder, filename);
   if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'File not found: ' + filename });
 
-  // Check duplicate
+  // Duplicate check — ผ่าน Health service (hash-based)
+  const dupCheck = await healthService.isDuplicate(filepath);
+  if (dupCheck.duplicate) {
+    orchestrator.onDuplicateDetected({ filename, originalFile: dupCheck.originalFile, hash: dupCheck.hash });
+    return res.status(409).json({ error: 'ไฟล์ซ้ำ (hash match)', originalFile: dupCheck.originalFile, youtubeUrl: dupCheck.youtubeUrl });
+  }
+
+  // Also check by filename in upload history
   const allUploads = uploads.load();
   const existing = allUploads.find(u => u.filename === filename);
   if (existing) return res.status(409).json({ error: 'File already uploaded', youtubeUrl: existing.youtube_url });
 
   try {
+    const fileSize = fs.statSync(filepath).size;
+
     const result = await youtubeService.uploadVideo({
       filepath,
       title: title || path.basename(filename, path.extname(filename)),
@@ -68,7 +82,7 @@ router.post('/single', async (req, res) => {
       privacy: privacy || config.privacy || 'public'
     });
 
-    // Save record
+    // Record to history
     const record = {
       filename,
       filepath,
@@ -76,7 +90,9 @@ router.post('/single', async (req, res) => {
       youtube_url: result.youtubeUrl,
       uploaded_at: new Date().toISOString(),
       deleted: false,
-      size: fs.existsSync(filepath) ? fs.statSync(filepath).size : 0
+      size: fileSize,
+      hash: dupCheck.hash,
+      source: 'folder'
     };
     allUploads.push(record);
 
@@ -88,18 +104,26 @@ router.post('/single', async (req, res) => {
     }
     uploads.save(allUploads);
 
-    // Update stats
-    updateStats(record.size, true);
+    // ★ emit ผ่าน EventBus — stats/dashboard/notification จะอัปเดตอัตโนมัติ
+    orchestrator.onUploadCompleted({
+      filename, size: fileSize, hash: dupCheck.hash, source: 'folder',
+      videoId: result.videoId, youtubeUrl: result.youtubeUrl
+    });
 
     res.json({ success: true, ...result, deleted: shouldDelete });
   } catch (error) {
     logger.error('Upload error', { filename, error: error.message });
-    updateStats(0, false);
+    // ★ emit failure
+    orchestrator.onUploadFailed({ filename, error: error.message, source: 'folder' });
     res.status(500).json({ error: error.message });
   }
 });
 
-// Upload all pending files (via queue)
+// ═══════════════════════════════════════════════════
+// QUEUE UPLOAD (ผ่าน Queue → queue emit completed/failed อัตโนมัติ)
+// กระบวนการ: Route → Queue.add() → Queue emit → Orchestrator → EventBus
+// ★ ห้าม emit ซ้ำใน task function — Queue จัดการให้แล้ว
+// ═══════════════════════════════════════════════════
 router.post('/all', (req, res) => {
   const authStatus = youtubeService.isAuthenticated();
   if (!authStatus.authenticated) {
@@ -122,10 +146,12 @@ router.post('/all', (req, res) => {
     return res.json({ totalFiles: 0, message: 'No files to upload' });
   }
 
-  // Queue all files
+  // Queue all files — Queue.completed event → Orchestrator จัดการ stats
   files.forEach(filename => {
     const filepath = path.join(folder, filename);
     uploadQueue.add(async () => {
+      const fileSize = fs.existsSync(filepath) ? fs.statSync(filepath).size : 0;
+
       const result = await youtubeService.uploadVideo({
         filepath,
         title: path.basename(filename, path.extname(filename)),
@@ -134,7 +160,7 @@ router.post('/all', (req, res) => {
         privacy: config.privacy || 'public'
       });
 
-      // Record
+      // Record to history (ไม่ emit stats — Queue event จัดการ)
       const currentUploads = uploads.load();
       const record = {
         filename,
@@ -143,7 +169,8 @@ router.post('/all', (req, res) => {
         youtube_url: result.youtubeUrl,
         uploaded_at: new Date().toISOString(),
         deleted: false,
-        size: fs.existsSync(filepath) ? fs.statSync(filepath).size : 0
+        size: fileSize,
+        source: 'folder'
       };
       currentUploads.push(record);
 
@@ -153,16 +180,18 @@ router.post('/all', (req, res) => {
         record.deleted = true;
       }
       uploads.save(currentUploads);
-      updateStats(record.size, true);
 
-      return result;
+      // Return result — Queue.completed event จะ fire พร้อม data นี้
+      return { ...result, size: fileSize };
     }, { filename });
   });
 
   res.json({ totalFiles: files.length, message: 'Queued for upload' });
 });
 
-// Direct drop-and-upload to YouTube
+// ═══════════════════════════════════════════════════
+// DROP UPLOAD (Direct — ไม่ผ่าน Queue → route emit เอง)
+// ═══════════════════════════════════════════════════
 router.post('/drop', upload.single('video'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file received' });
 
@@ -176,15 +205,17 @@ router.post('/drop', upload.single('video'), async (req, res) => {
   const filename = req.file.filename;
   const filepath = req.file.path;
 
-  // Check duplicate
-  const allUploads = uploads.load();
-  const existing = allUploads.find(u => u.filename === filename);
-  if (existing) {
+  // Duplicate check (hash)
+  const dupCheck = await healthService.isDuplicate(filepath);
+  if (dupCheck.duplicate) {
     if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
-    return res.status(409).json({ error: 'File already uploaded', youtubeUrl: existing.youtube_url });
+    orchestrator.onDuplicateDetected({ filename, originalFile: dupCheck.originalFile, hash: dupCheck.hash });
+    return res.status(409).json({ error: 'ไฟล์ซ้ำ', originalFile: dupCheck.originalFile, youtubeUrl: dupCheck.youtubeUrl });
   }
 
   try {
+    const fileSize = fs.existsSync(filepath) ? fs.statSync(filepath).size : 0;
+
     const result = await youtubeService.uploadVideo({
       filepath,
       title: req.body.title || path.basename(filename, path.extname(filename)),
@@ -193,38 +224,40 @@ router.post('/drop', upload.single('video'), async (req, res) => {
       privacy: req.body.privacy || config.privacy || 'public'
     });
 
-    const fileSize = fs.existsSync(filepath) ? fs.statSync(filepath).size : 0;
-
+    const allUploads = uploads.load();
     allUploads.push({
-      filename,
-      filepath,
+      filename, filepath,
       youtube_id: result.videoId,
       youtube_url: result.youtubeUrl,
       uploaded_at: new Date().toISOString(),
-      deleted: true,
-      size: fileSize
+      deleted: true, size: fileSize,
+      hash: dupCheck.hash, source: 'drop'
     });
     uploads.save(allUploads);
 
     // Always delete temp file
     if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
-    updateStats(fileSize, true);
+
+    // ★ emit ผ่าน EventBus
+    orchestrator.onUploadCompleted({
+      filename, size: fileSize, hash: dupCheck.hash, source: 'drop',
+      videoId: result.videoId, youtubeUrl: result.youtubeUrl
+    });
 
     res.json({ success: true, ...result, filename });
   } catch (error) {
     logger.error('Drop upload error', { filename, error: error.message });
     if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
-    updateStats(0, false);
+    orchestrator.onUploadFailed({ filename, error: error.message, source: 'drop' });
     res.status(500).json({ error: error.message });
   }
 });
 
-// Queue status
+// Queue management endpoints
 router.get('/queue', (req, res) => {
   res.json(uploadQueue.getStatus());
 });
 
-// Pause/Resume queue
 router.post('/queue/pause', (req, res) => {
   uploadQueue.pause();
   res.json({ success: true, paused: true });
@@ -239,32 +272,5 @@ router.delete('/queue/:id', (req, res) => {
   const cancelled = uploadQueue.cancel(parseInt(req.params.id));
   res.json({ success: cancelled });
 });
-
-function updateStats(size, success) {
-  const allStats = stats.load();
-  const today = new Date().toISOString().split('T')[0];
-  const hour = new Date().getHours().toString();
-
-  if (success) {
-    allStats.totalUploads = (allStats.totalUploads || 0) + 1;
-    allStats.totalSize = (allStats.totalSize || 0) + (size || 0);
-  } else {
-    allStats.failedUploads = (allStats.failedUploads || 0) + 1;
-  }
-
-  if (!allStats.dailyStats) allStats.dailyStats = {};
-  if (!allStats.dailyStats[today]) allStats.dailyStats[today] = { uploads: 0, failures: 0, size: 0 };
-  if (success) {
-    allStats.dailyStats[today].uploads++;
-    allStats.dailyStats[today].size += (size || 0);
-  } else {
-    allStats.dailyStats[today].failures++;
-  }
-
-  if (!allStats.uploadsByHour) allStats.uploadsByHour = {};
-  allStats.uploadsByHour[hour] = (allStats.uploadsByHour[hour] || 0) + 1;
-
-  stats.save(allStats);
-}
 
 module.exports = router;

@@ -4,6 +4,7 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const { settings, uploads } = require('../utils/store');
+const orchestrator = require('../services/orchestrator');
 
 const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.mpeg', '.mpg'];
 
@@ -55,6 +56,8 @@ router.post('/settings', (req, res) => {
   const current = settings.load();
   const updated = { ...current, ...req.body };
   settings.save(updated);
+  // ★ emit settings change → watcher restart + dashboard refresh
+  orchestrator.onSettingsUpdated(updated);
   res.json({ success: true, settings: updated });
 });
 

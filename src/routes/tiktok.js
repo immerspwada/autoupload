@@ -1,9 +1,11 @@
 // TikTok Routes - Search, Download (no watermark), and Upload to YouTube
+// ★ ทุกเหตุการณ์ emit ผ่าน Orchestrator → EventBus
 const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const tiktokService = require('../services/tiktok');
 const youtubeService = require('../services/youtube');
+const orchestrator = require('../services/orchestrator');
 const { settings, uploads } = require('../utils/store');
 const logger = require('../utils/logger');
 
@@ -177,6 +179,13 @@ router.post('/download-and-upload', async (req, res) => {
       fs.unlinkSync(downloadResult.filepath);
     }
 
+    // ★ emit ผ่าน EventBus — ทุกฟีเจอร์ได้รับผลกระทบ
+    orchestrator.onTikTokDownloaded({ filename: downloadResult.filename, provider: downloadResult.provider });
+    orchestrator.onUploadCompleted({
+      filename: downloadResult.filename, source: 'tiktok',
+      videoId: result.videoId, youtubeUrl: result.youtubeUrl
+    });
+
     res.json({
       success: true,
       videoId: result.videoId,
@@ -186,6 +195,7 @@ router.post('/download-and-upload', async (req, res) => {
     });
   } catch (error) {
     logger.error('TikTok download-and-upload error', { error: error.message });
+    orchestrator.onUploadFailed({ filename: filename || 'tiktok-video', error: error.message, source: 'tiktok' });
     res.status(500).json({ error: error.message });
   }
 });
@@ -296,12 +306,25 @@ async function processTikTokBatch(videos, options) {
         success: true,
         youtubeUrl: result.youtubeUrl
       });
+
+      // ★ emit ผ่าน EventBus
+      orchestrator.onTikTokDownloaded({ filename: downloadResult.filename });
+      orchestrator.onUploadCompleted({
+        filename: downloadResult.filename, source: 'tiktok',
+        videoId: result.videoId, youtubeUrl: result.youtubeUrl
+      });
     } catch (error) {
       logger.error(`Batch error for video ${i + 1}`, { error: error.message });
       tiktokProgress.results.push({
         title: video.title || `วิดีโอ ${i + 1}`,
         success: false,
         error: error.message
+      });
+
+      // ★ emit failure
+      orchestrator.onUploadFailed({
+        filename: video.title || `tiktok-batch-${i + 1}`,
+        error: error.message, source: 'tiktok'
       });
     }
 

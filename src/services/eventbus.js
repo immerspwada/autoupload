@@ -91,17 +91,15 @@ class EventBus extends EventEmitter {
       when: 'upload:completed',
       priority: 10,
       then: (payload, bus) => {
-        // Notify stats
+        // Notify stats (ใช้ size จาก payload หรือ 0)
         bus.dispatch('stats:increment', {
           type: 'upload',
           filename: payload.filename,
           size: payload.size || 0,
-          source: payload.source || 'folder'
+          source: payload.source || 'unknown'
         });
         // Notify dashboard to refresh
         bus.dispatch('dashboard:refresh', { reason: 'upload_completed' });
-        // Notify history
-        bus.dispatch('history:add', payload);
         // Notify health to register hash
         if (payload.hash) {
           bus.dispatch('health:register_hash', { hash: payload.hash, filename: payload.filename });
