@@ -3,26 +3,82 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>YouTube Auto Uploader</title>
+  <title>YouTube Auto Uploader v2</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>🎬 YouTube Auto Uploader</h1>
-      <p class="subtitle">อัปโหลดวิดีโอขึ้น YouTube แบบอัตโนมัติ ไม่ซ้ำ</p>
+      <div class="header-top">
+        <h1>🎬 YouTube Auto Uploader</h1>
+        <span class="version">v2.0</span>
+      </div>
+      <p class="subtitle">อัปโหลดวิดีโอขึ้น YouTube แบบอัตโนมัติ • Queue • Scheduler • Analytics</p>
       <div id="auth-status" class="auth-status"></div>
+      <div id="channel-info" class="channel-info" style="display:none;"></div>
     </header>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="drop">📤 ลากวาง</button>
+      <button class="tab active" data-tab="dashboard">📊 Dashboard</button>
+      <button class="tab" data-tab="drop">📤 ลากวาง</button>
+      <button class="tab" data-tab="tiktok">🎵 TikTok</button>
       <button class="tab" data-tab="files">📁 ไฟล์วิดีโอ</button>
+      <button class="tab" data-tab="queue">🔄 คิว</button>
+      <button class="tab" data-tab="scheduler">⏰ Scheduler</button>
       <button class="tab" data-tab="settings">⚙️ ตั้งค่า</button>
       <button class="tab" data-tab="history">📋 ประวัติ</button>
     </nav>
 
+    <!-- Dashboard Tab -->
+    <section id="tab-dashboard" class="tab-content active">
+      <div class="dashboard-grid">
+        <div class="stat-card">
+          <div class="stat-icon">📤</div>
+          <div class="stat-value" id="stat-total-uploads">0</div>
+          <div class="stat-label">อัปโหลดทั้งหมด</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">💾</div>
+          <div class="stat-value" id="stat-total-size">0 B</div>
+          <div class="stat-label">ขนาดรวม</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">✅</div>
+          <div class="stat-value" id="stat-success-rate">0%</div>
+          <div class="stat-label">อัตราสำเร็จ</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📅</div>
+          <div class="stat-value" id="stat-today">0</div>
+          <div class="stat-label">อัปโหลดวันนี้</div>
+        </div>
+      </div>
+
+      <div class="dashboard-sections">
+        <div class="dashboard-section">
+          <h3>📈 กราฟ 7 วันย้อนหลัง</h3>
+          <div id="chart-7days" class="chart-container"></div>
+        </div>
+
+        <div class="dashboard-section">
+          <h3>🕐 การอัปโหลดตามชั่วโมง</h3>
+          <div id="chart-hours" class="chart-container"></div>
+        </div>
+
+        <div class="dashboard-section">
+          <h3>🔄 สถานะคิว</h3>
+          <div id="dashboard-queue" class="queue-mini"></div>
+        </div>
+
+        <div class="dashboard-section">
+          <h3>📋 อัปโหลดล่าสุด</h3>
+          <div id="dashboard-recent"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Drop Zone Tab -->
-    <section id="tab-drop" class="tab-content active">
+    <section id="tab-drop" class="tab-content">
       <div id="drop-zone" class="drop-zone">
         <div class="drop-zone-content">
           <div class="drop-icon">📤</div>
@@ -56,11 +112,66 @@
       <div id="drop-results" class="drop-results" style="display:none;"></div>
     </section>
 
+    <!-- TikTok Tab -->
+    <section id="tab-tiktok" class="tab-content">
+      <div class="tiktok-section">
+        <div class="tiktok-search">
+          <h3>🎵 ค้นหาวิดีโอ TikTok</h3>
+          <p class="section-desc">ค้นหาวิดีโอจาก TikTok ด้วยคีย์เวิร์ด → ดาวน์โหลดแบบไม่มีลายน้ำ → อัปโหลดไป YouTube</p>
+          
+          <div class="search-box">
+            <input type="text" id="tiktok-keyword" placeholder="ใส่คีย์เวิร์ด เช่น: แมวน่ารัก, cooking, travel Thailand" class="search-input">
+            <button id="btn-tiktok-search" class="btn btn-primary">🔍 ค้นหา</button>
+          </div>
+
+          <div class="tiktok-url-box">
+            <p class="divider-text">— หรือวางลิงก์ TikTok โดยตรง —</p>
+            <div class="url-input-row">
+              <input type="text" id="tiktok-url" placeholder="https://www.tiktok.com/@user/video/1234567890" class="search-input">
+              <button id="btn-tiktok-download-url" class="btn btn-secondary">⬇️ ดาวน์โหลด</button>
+              <button id="btn-tiktok-download-upload-url" class="btn btn-primary">🚀 โหลด+อัป</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="tiktok-loading" class="loading-state" style="display:none;">
+          <div class="spinner"></div>
+          <p>กำลังค้นหา...</p>
+        </div>
+
+        <div id="tiktok-results" class="tiktok-results" style="display:none;">
+          <div class="tiktok-results-header">
+            <h3>📋 ผลการค้นหา: <span id="tiktok-result-keyword"></span></h3>
+            <div class="tiktok-batch-actions">
+              <button id="btn-tiktok-select-all" class="btn btn-secondary">☑️ เลือกทั้งหมด</button>
+              <button id="btn-tiktok-batch-upload" class="btn btn-primary">🚀 อัปโหลดที่เลือกไป YouTube</button>
+            </div>
+          </div>
+          <div id="tiktok-video-list" class="tiktok-video-list"></div>
+        </div>
+
+        <div id="tiktok-progress" class="progress-container" style="display:none;">
+          <div class="progress-info">
+            <span id="tiktok-progress-text">กำลังดำเนินการ...</span>
+            <span id="tiktok-progress-count">0/0</span>
+          </div>
+          <div class="progress-bar">
+            <div id="tiktok-progress-fill" class="progress-fill"></div>
+          </div>
+          <p id="tiktok-progress-file" class="progress-file"></p>
+          <p id="tiktok-progress-phase" class="progress-phase"></p>
+        </div>
+
+        <div id="tiktok-batch-results" class="drop-results" style="display:none;"></div>
+      </div>
+    </section>
+
     <!-- Files Tab -->
     <section id="tab-files" class="tab-content">
       <div class="toolbar">
         <button id="btn-refresh" class="btn btn-secondary">🔄 รีเฟรช</button>
         <button id="btn-upload-all" class="btn btn-primary">🚀 อัปโหลดทั้งหมด</button>
+        <span id="files-total-size" class="toolbar-info"></span>
       </div>
 
       <div id="progress-bar" class="progress-container" style="display:none;">
@@ -76,6 +187,55 @@
 
       <div id="file-list" class="file-list">
         <p class="empty-state">⚙️ กรุณาตั้งค่าโฟลเดอร์ก่อนใช้งาน</p>
+      </div>
+    </section>
+
+    <!-- Queue Tab -->
+    <section id="tab-queue" class="tab-content">
+      <div class="toolbar">
+        <button id="btn-queue-pause" class="btn btn-secondary">⏸️ หยุดคิว</button>
+        <button id="btn-queue-resume" class="btn btn-primary">▶️ เริ่มคิว</button>
+        <button id="btn-queue-clear" class="btn btn-danger">🗑️ ล้างคิว</button>
+      </div>
+      <div id="queue-stats" class="queue-stats"></div>
+      <div id="queue-list" class="queue-list">
+        <p class="empty-state">ไม่มีรายการในคิว</p>
+      </div>
+    </section>
+
+    <!-- Scheduler Tab -->
+    <section id="tab-scheduler" class="tab-content">
+      <div class="settings-form">
+        <h3>⏰ ตั้งค่า Auto Scheduler</h3>
+        <p class="section-desc">ระบบจะสแกนโฟลเดอร์ตามเวลาที่กำหนด และอัปโหลดไฟล์ใหม่อัตโนมัติ</p>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="scheduler-enabled">
+            <span>🟢 เปิดใช้งาน Auto Scheduler</span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label for="scheduler-interval">⏱️ ช่วงเวลาสแกน (นาที)</label>
+          <input type="number" id="scheduler-interval" min="5" max="1440" value="30">
+          <small>ระบบจะสแกนโฟลเดอร์ทุกๆ X นาที เพื่อหาไฟล์ใหม่</small>
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="scheduler-watch" checked>
+            <span>👁️ เปิด Folder Watch (ตรวจจับไฟล์ใหม่ทันที)</span>
+          </label>
+          <small>ตรวจจับไฟล์วิดีโอใหม่ในโฟลเดอร์แบบ real-time</small>
+        </div>
+
+        <div class="scheduler-actions">
+          <button id="btn-scheduler-save" class="btn btn-primary">💾 บันทึก</button>
+          <button id="btn-scheduler-scan" class="btn btn-secondary">🔍 สแกนตอนนี้</button>
+        </div>
+
+        <div id="scheduler-status" class="scheduler-status"></div>
       </div>
     </section>
 
@@ -123,6 +283,7 @@
     <section id="tab-history" class="tab-content">
       <div class="toolbar">
         <button id="btn-clear-history" class="btn btn-danger">🗑️ ล้างประวัติ</button>
+        <span id="history-count" class="toolbar-info"></span>
       </div>
       <div id="history-list" class="history-list">
         <p class="empty-state">ยังไม่มีประวัติการอัปโหลด</p>
@@ -163,6 +324,9 @@
       </form>
     </div>
   </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
 
   <script src="app.js"></script>
 </body>
