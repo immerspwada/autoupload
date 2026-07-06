@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>YouTube Auto Uploader v2</title>
+  <title>AutoUploader — TikTok → YouTube</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -28,6 +31,27 @@
       <button class="tab" data-tab="settings">⚙️ ตั้งค่า</button>
       <button class="tab" data-tab="history">📋 ประวัติ</button>
     </nav>
+
+    <!-- Status Bar (always visible) -->
+    <div id="status-bar" class="status-bar">
+      <div class="status-bar-item" id="sb-connection">
+        <span class="sb-dot connected"></span>
+        <span class="sb-text">เชื่อมต่อแล้ว</span>
+      </div>
+      <div class="status-bar-item" id="sb-queue">
+        <span class="sb-icon">🔄</span>
+        <span class="sb-text">คิว: 0</span>
+      </div>
+      <div class="status-bar-item" id="sb-uptime">
+        <span class="sb-icon">⏱️</span>
+        <span class="sb-text">-</span>
+      </div>
+      <div class="status-bar-item" id="sb-health">
+        <span class="sb-icon">💚</span>
+        <span class="sb-text">ปกติ</span>
+      </div>
+      <button class="status-bar-btn" onclick="runCleanup()" title="ล้าง temp files">🧹</button>
+    </div>
 
     <!-- Dashboard Tab -->
     <section id="tab-dashboard" class="tab-content active">
@@ -116,35 +140,35 @@
     <section id="tab-tiktok" class="tab-content">
       <div class="tiktok-section">
         <div class="tiktok-search">
-          <h3>🎵 ค้นหาวิดีโอ TikTok</h3>
-          <p class="section-desc">ค้นหาวิดีโอจาก TikTok ด้วยคีย์เวิร์ด → ดาวน์โหลดแบบไม่มีลายน้ำ → อัปโหลดไป YouTube</p>
+          <h3>🎵 TikTok → YouTube</h3>
+          <p class="section-desc">ค้นหาวิดีโอจาก TikTok ด้วยคีย์เวิร์ด ดาวน์โหลดแบบไม่มีลายน้ำ แล้วอัปโหลดไป YouTube อัตโนมัติ</p>
           
           <div class="search-box">
-            <input type="text" id="tiktok-keyword" placeholder="ใส่คีย์เวิร์ด เช่น: แมวน่ารัก, cooking, travel Thailand" class="search-input">
+            <input type="text" id="tiktok-keyword" placeholder="ค้นหา เช่น: แมวน่ารัก, cooking tips, travel vlog..." class="search-input">
             <button id="btn-tiktok-search" class="btn btn-primary">🔍 ค้นหา</button>
           </div>
 
           <div class="tiktok-url-box">
-            <p class="divider-text">— หรือวางลิงก์ TikTok โดยตรง —</p>
+            <p class="divider-text">หรือวาง URL วิดีโอ TikTok โดยตรง</p>
             <div class="url-input-row">
-              <input type="text" id="tiktok-url" placeholder="https://www.tiktok.com/@user/video/1234567890" class="search-input">
-              <button id="btn-tiktok-download-url" class="btn btn-secondary">⬇️ ดาวน์โหลด</button>
-              <button id="btn-tiktok-download-upload-url" class="btn btn-primary">🚀 โหลด+อัป</button>
+              <input type="text" id="tiktok-url" placeholder="https://www.tiktok.com/@user/video/..." class="search-input">
+              <button id="btn-tiktok-download-url" class="btn btn-secondary btn-sm">⬇️ โหลดเก็บ</button>
+              <button id="btn-tiktok-download-upload-url" class="btn btn-primary btn-sm">🚀 โหลด+อัป YouTube</button>
             </div>
           </div>
         </div>
 
         <div id="tiktok-loading" class="loading-state" style="display:none;">
           <div class="spinner"></div>
-          <p>กำลังค้นหา...</p>
+          <p>กำลังค้นหาวิดีโอ...</p>
         </div>
 
         <div id="tiktok-results" class="tiktok-results" style="display:none;">
           <div class="tiktok-results-header">
-            <h3>📋 ผลการค้นหา: <span id="tiktok-result-keyword"></span></h3>
+            <h3>ผลการค้นหา: <span id="tiktok-result-keyword"></span></h3>
             <div class="tiktok-batch-actions">
-              <button id="btn-tiktok-select-all" class="btn btn-secondary">☑️ เลือกทั้งหมด</button>
-              <button id="btn-tiktok-batch-upload" class="btn btn-primary">🚀 อัปโหลดที่เลือกไป YouTube</button>
+              <button id="btn-tiktok-select-all" class="btn btn-secondary btn-sm">☑️ เลือกทั้งหมด</button>
+              <button id="btn-tiktok-batch-upload" class="btn btn-primary btn-sm">🚀 อัปโหลดที่เลือก</button>
             </div>
           </div>
           <div id="tiktok-video-list" class="tiktok-video-list"></div>
@@ -327,6 +351,24 @@
 
   <!-- Toast Container -->
   <div id="toast-container"></div>
+
+  <!-- Keyboard Shortcuts Help -->
+  <div id="shortcuts-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <h3>⌨️ คีย์ลัด (Keyboard Shortcuts)</h3>
+      <div class="shortcuts-grid">
+        <div class="shortcut-item"><kbd>1</kbd>-<kbd>8</kbd> <span>สลับแท็บ</span></div>
+        <div class="shortcut-item"><kbd>R</kbd> <span>รีเฟรชไฟล์</span></div>
+        <div class="shortcut-item"><kbd>U</kbd> <span>อัปโหลดทั้งหมด</span></div>
+        <div class="shortcut-item"><kbd>S</kbd> <span>สแกนโฟลเดอร์</span></div>
+        <div class="shortcut-item"><kbd>?</kbd> <span>แสดง/ซ่อนคีย์ลัด</span></div>
+        <div class="shortcut-item"><kbd>Esc</kbd> <span>ปิด modal</span></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="document.getElementById('shortcuts-modal').style.display='none'">ปิด</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

@@ -972,3 +972,159 @@ function timeAgo(dateStr) {
   const days = Math.floor(hours / 24);
   return `${days} วันที่แล้ว`;
 }
+
+// ==================== STATUS BAR ====================
+function updateStatusBar(data) {
+  if (!data) return;
+
+  // Connection status
+  const connEl = document.getElementById('sb-connection');
+  if (connEl) {
+    const dot = connEl.querySelector('.sb-dot');
+    const text = connEl.querySelector('.sb-text');
+    if (ws && ws.readyState === 1) {
+      dot.className = 'sb-dot connected';
+      text.textContent = 'เชื่อมต่อ';
+    } else {
+      dot.className = 'sb-dot disconnected';
+      text.textContent = 'ขาดการเชื่อมต่อ';
+    }
+  }
+
+  // Queue
+  const queueEl = document.getElementById('sb-queue');
+  if (queueEl && data.queue) {
+    const text = queueEl.querySelector('.sb-text');
+    const pending = data.queue.pending || 0;
+    const processing = data.queue.processing || 0;
+    if (processing > 0) text.textContent = `อัปโหลด: ${processing} | รอ: ${pending}`;
+    else if (pending > 0) text.textContent = `คิว: ${pending}`;
+    else text.textContent = 'คิวว่าง';
+  }
+
+  // Uptime
+  const uptimeEl = document.getElementById('sb-uptime');
+  if (uptimeEl && data.uptime) {
+    uptimeEl.querySelector('.sb-text').textContent = data.uptime;
+  }
+
+  // Health
+  const healthEl = document.getElementById('sb-health');
+  if (healthEl && data.overall) {
+    const icon = healthEl.querySelector('.sb-icon');
+    const text = healthEl.querySelector('.sb-text');
+    switch (data.overall) {
+      case 'healthy': icon.textContent = '💚'; text.textContent = 'ปกติ'; break;
+      case 'warning': icon.textContent = '💛'; text.textContent = 'เตือน'; break;
+      case 'critical': icon.textContent = '🔴'; text.textContent = 'วิกฤต'; break;
+      case 'error': icon.textContent = '❌'; text.textContent = 'ผิดพลาด'; break;
+    }
+  }
+}
+
+async function runCleanup() {
+  try {
+    const res = await fetch('/api/health/cleanup', { method: 'POST' });
+    const data = await res.json();
+    showToast(`🧹 ทำความสะอาดเสร็จ! ลบ ${data.tempFiles.cleaned} ไฟล์ temp`, 'success');
+  } catch (e) {
+    showToast('ล้างข้อมูลล้มเหลว', 'error');
+  }
+}
+
+// ==================== KEYBOARD SHORTCUTS ====================
+document.addEventListener('keydown', (e) => {
+  // Ignore when typing in inputs
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+  const tabs = ['dashboard', 'drop', 'tiktok', 'files', 'queue', 'scheduler', 'settings', 'history'];
+
+  // Number keys 1-8 for tabs
+  if (e.key >= '1' && e.key <= '8') {
+    e.preventDefault();
+    const idx = parseInt(e.key) - 1;
+    if (idx < tabs.length) {
+      const tabBtn = document.querySelector(`.tab[data-tab="${tabs[idx]}"]`);
+      if (tabBtn) tabBtn.click();
+    }
+    return;
+  }
+
+  switch (e.key.toLowerCase()) {
+    case 'r':
+      e.preventDefault();
+      loadFiles();
+      showToast('🔄 รีเฟรช', 'info');
+      break;
+    case 'u':
+      e.preventDefault();
+      document.getElementById('btn-upload-all')?.click();
+      break;
+    case 's':
+      e.preventDefault();
+      document.getElementById('btn-scheduler-scan')?.click();
+      break;
+    case '?':
+      e.preventDefault();
+      const modal = document.getElementById('shortcuts-modal');
+      modal.style.display = modal.style.display === 'none' ? 'flex' : 'none';
+      break;
+    case 'escape':
+      document.getElementById('upload-modal').style.display = 'none';
+      document.getElementById('shortcuts-modal').style.display = 'none';
+      break;
+  }
+});
+
+// ==================== DESKTOP NOTIFICATIONS ====================
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function sendDesktopNotification(title, body, icon = '🎬') {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, { body, icon: '/favicon.ico', badge: '/favicon.ico' });
+  }
+}
+
+// Request permission on first interaction
+document.addEventListener('click', () => requestNotificationPermission(), { once: true });
+
+// ==================== ENHANCED WS MESSAGE HANDLER ====================
+// Override handleWSMessage to add status bar + notifications
+const _origHandleWSMessage = handleWSMessage;
+handleWSMessage = function(type, data) {
+  // Handle system status updates
+  if (type === 'system:status') {
+    updateStatusBar(data);
+    return;
+  }
+
+  // Desktop notifications for important events
+  if (type === 'queue:completed') {
+    sendDesktopNotification('อัปโหลดสำเร็จ ✅', data.filename);
+  } else if (type === 'queue:failed') {
+    sendDesktopNotification('อัปโหลดล้มเหลว ❌', data.filename);
+  }
+
+  // Original handler
+  _origHandleWSMessage(type, data);
+};
+
+// Load initial health status
+async function loadHealthStatus() {
+  try {
+    const res = await fetch('/api/health');
+    const data = await res.json();
+    updateStatusBar(data);
+  } catch (e) { /* silent */ }
+}
+
+// Init status bar on load
+document.addEventListener('DOMContentLoaded', () => {
+  loadHealthStatus();
+  // Refresh health every 30s as fallback
+  setInterval(loadHealthStatus, 30000);
+});

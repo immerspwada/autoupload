@@ -10,6 +10,7 @@ const { errorHandler, notFoundHandler } = require('./src/middleware/errorHandler
 const youtubeService = require('./src/services/youtube');
 const uploadQueue = require('./src/services/queue');
 const scheduler = require('./src/services/scheduler');
+const healthService = require('./src/services/health');
 
 // Routes
 const authRoutes = require('./src/routes/auth');
@@ -17,6 +18,7 @@ const filesRoutes = require('./src/routes/files');
 const uploadRoutes = require('./src/routes/upload');
 const statsRoutes = require('./src/routes/stats');
 const tiktokRoutes = require('./src/routes/tiktok');
+const healthRoutes = require('./src/routes/health');
 
 const app = express();
 const server = http.createServer(app);
@@ -77,6 +79,7 @@ app.use('/api/files', filesRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/tiktok', tiktokRoutes);
+app.use('/api/health', healthRoutes);
 
 // Legacy routes compatibility (so existing frontend still works while we upgrade)
 app.get('/api/settings', (req, res) => {
@@ -180,6 +183,25 @@ server.listen(PORT, () => {
 
   // Start scheduler if enabled
   scheduler.start();
+
+  // Auto-cleanup every 6 hours
+  setInterval(() => {
+    healthService.cleanupQueue();
+    healthService.cleanupTempFiles();
+  }, 6 * 60 * 60 * 1000);
+
+  // Broadcast system status every 30 seconds
+  setInterval(async () => {
+    if (wsClients.size > 0) {
+      const health = await healthService.getHealth();
+      broadcast('system:status', {
+        overall: health.overall,
+        uptime: health.uptimeFormatted,
+        queue: health.queue,
+        youtube: health.youtube
+      });
+    }
+  }, 30000);
 });
 
 // Graceful shutdown

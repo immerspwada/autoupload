@@ -14,52 +14,45 @@ class TikTokService {
   }
 
   /**
-   * Search TikTok videos by keyword using unofficial API
+   * Search TikTok videos by keyword using tikwm feed/search API
    * Returns list of video metadata
    */
   async searchVideos(keyword, count = 10) {
     logger.info('Searching TikTok videos', { keyword, count });
 
     try {
-      // Use TikTok's unofficial search endpoint
-      const searchUrl = `https://www.tiktok.com/api/search/general/full/?keyword=${encodeURIComponent(keyword)}&offset=0&search_id=&count=${count}`;
+      // Use tikwm's feed search endpoint
+      const searchUrl = `https://www.tikwm.com/api/feed/search?keywords=${encodeURIComponent(keyword)}&count=${count}&cursor=0&HD=1`;
 
       const response = await this._fetchJSON(searchUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-          'Referer': 'https://www.tiktok.com/'
+          'Accept': 'application/json'
         }
       });
 
-      if (!response || !response.data) {
-        // Fallback: try alternative search method
-        return await this._searchFallback(keyword, count);
+      if (response && response.code === 0 && response.data && response.data.videos) {
+        const videos = response.data.videos.map(video => ({
+          id: video.video_id || video.id,
+          desc: video.title || video.desc || 'No description',
+          author: video.author?.unique_id || 'unknown',
+          authorNickname: video.author?.nickname || 'Unknown',
+          duration: video.duration || 0,
+          playCount: video.play_count || 0,
+          likeCount: video.digg_count || 0,
+          commentCount: video.comment_count || 0,
+          shareCount: video.share_count || 0,
+          createTime: video.create_time,
+          cover: video.origin_cover || video.cover || '',
+          videoUrl: `https://www.tiktok.com/@${video.author?.unique_id || 'user'}/video/${video.video_id || video.id}`
+        }));
+
+        logger.info('Search completed', { keyword, found: videos.length });
+        return videos;
       }
 
-      const videos = [];
-      for (const item of response.data) {
-        if (item.type === 1 && item.item) {
-          const video = item.item;
-          videos.push({
-            id: video.id,
-            desc: video.desc || 'No description',
-            author: video.author?.uniqueId || 'unknown',
-            authorNickname: video.author?.nickname || 'Unknown',
-            duration: video.video?.duration || 0,
-            playCount: video.stats?.playCount || 0,
-            likeCount: video.stats?.diggCount || 0,
-            commentCount: video.stats?.commentCount || 0,
-            shareCount: video.stats?.shareCount || 0,
-            createTime: video.createTime,
-            cover: video.video?.cover || '',
-            videoUrl: `https://www.tiktok.com/@${video.author?.uniqueId}/video/${video.id}`
-          });
-        }
-      }
-
-      logger.info('Search completed', { keyword, found: videos.length });
-      return videos;
+      // Fallback: try alternative search endpoint
+      return await this._searchFallback(keyword, count);
     } catch (error) {
       logger.error('TikTok search error', { error: error.message });
       return await this._searchFallback(keyword, count);
@@ -67,38 +60,38 @@ class TikTokService {
   }
 
   /**
-   * Fallback search using scraping approach
+   * Fallback search using tikwm user feed or hashtag endpoint
    */
   async _searchFallback(keyword, count) {
     try {
-      const url = `https://www.tiktok.com/api/search/item/full/?keyword=${encodeURIComponent(keyword)}&count=${count}&search_id=&cursor=0`;
+      // Try tikwm hashtag feed
+      const url = `https://www.tikwm.com/api/feed/search?keywords=${encodeURIComponent(keyword)}&count=${count}&cursor=0`;
 
       const response = await this._fetchJSON(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-          'Referer': 'https://www.tiktok.com/search?q=' + encodeURIComponent(keyword)
+          'Accept': 'application/json'
         }
       });
 
-      if (!response || !response.item_list) {
-        return [];
+      if (response && response.code === 0 && response.data && response.data.videos) {
+        return response.data.videos.map(video => ({
+          id: video.video_id || video.id,
+          desc: video.title || 'No description',
+          author: video.author?.unique_id || 'unknown',
+          authorNickname: video.author?.nickname || 'Unknown',
+          duration: video.duration || 0,
+          playCount: video.play_count || 0,
+          likeCount: video.digg_count || 0,
+          commentCount: video.comment_count || 0,
+          shareCount: video.share_count || 0,
+          createTime: video.create_time,
+          cover: video.origin_cover || video.cover || '',
+          videoUrl: `https://www.tiktok.com/@${video.author?.unique_id || 'user'}/video/${video.video_id || video.id}`
+        }));
       }
 
-      return response.item_list.map(video => ({
-        id: video.id,
-        desc: video.desc || 'No description',
-        author: video.author?.uniqueId || 'unknown',
-        authorNickname: video.author?.nickname || 'Unknown',
-        duration: video.video?.duration || 0,
-        playCount: video.stats?.playCount || 0,
-        likeCount: video.stats?.diggCount || 0,
-        commentCount: video.stats?.commentCount || 0,
-        shareCount: video.stats?.shareCount || 0,
-        createTime: video.createTime,
-        cover: video.video?.cover || '',
-        videoUrl: `https://www.tiktok.com/@${video.author?.uniqueId}/video/${video.id}`
-      }));
+      return [];
     } catch (error) {
       logger.error('Fallback search error', { error: error.message });
       return [];
@@ -170,21 +163,17 @@ class TikTokService {
    * Provider 1: tikwm.com API (most reliable)
    */
   async _downloadViaTikwm(videoUrl) {
-    const apiUrl = 'https://www.tikwm.com/api/';
-
-    const postData = `url=${encodeURIComponent(videoUrl)}&hd=1`;
+    // Use GET method with query params - more reliable than POST
+    const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(videoUrl)}&hd=1`;
 
     const response = await this._fetchJSON(apiUrl, {
-      method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json'
-      },
-      body: postData
+      }
     });
 
-    if (response && response.data && response.data.play) {
+    if (response && response.code === 0 && response.data && response.data.play) {
       return {
         url: response.data.hdplay || response.data.play,
         provider: 'tikwm',
