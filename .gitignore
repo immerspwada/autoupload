@@ -1,0 +1,7 @@
+node_modules/
+data/
+uploads/
+client_secret.json
+client_secret_*.json
+token.json
+.DS_Store

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Auto Uploader</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎬 YouTube Auto Uploader</h1>
+      <p class="subtitle">อัปโหลดวิดีโอขึ้น YouTube แบบอัตโนมัติ ไม่ซ้ำ</p>
+      <div id="auth-status" class="auth-status"></div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="drop">📤 ลากวาง</button>
+      <button class="tab" data-tab="files">📁 ไฟล์วิดีโอ</button>
+      <button class="tab" data-tab="settings">⚙️ ตั้งค่า</button>
+      <button class="tab" data-tab="history">📋 ประวัติ</button>
+    </nav>
+
+    <!-- Drop Zone Tab -->
+    <section id="tab-drop" class="tab-content active">
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-zone-content">
+          <div class="drop-icon">📤</div>
+          <h2>ลากไฟล์วิดีโอวางที่นี่</h2>
+          <p>หรือคลิกเพื่อเลือกไฟล์</p>
+          <p class="drop-formats">รองรับ: MP4, AVI, MOV, MKV, WMV, FLV, WEBM</p>
+          <input type="file" id="file-input" multiple accept="video/*" style="display:none">
+        </div>
+      </div>
+
+      <div id="drop-queue" class="drop-queue" style="display:none;">
+        <h3>📋 คิวอัปโหลด</h3>
+        <div id="drop-queue-list"></div>
+        <div class="drop-queue-actions">
+          <button id="btn-upload-queue" class="btn btn-primary">🚀 อัปโหลดทั้งหมดไป YouTube</button>
+          <button id="btn-clear-queue" class="btn btn-secondary">🗑️ ล้างคิว</button>
+        </div>
+      </div>
+
+      <div id="drop-progress" class="progress-container" style="display:none;">
+        <div class="progress-info">
+          <span id="drop-progress-text">กำลังอัปโหลด...</span>
+          <span id="drop-progress-count">0/0</span>
+        </div>
+        <div class="progress-bar">
+          <div id="drop-progress-fill" class="progress-fill"></div>
+        </div>
+        <p id="drop-progress-file" class="progress-file"></p>
+      </div>
+
+      <div id="drop-results" class="drop-results" style="display:none;"></div>
+    </section>
+
+    <!-- Files Tab -->
+    <section id="tab-files" class="tab-content">
+      <div class="toolbar">
+        <button id="btn-refresh" class="btn btn-secondary">🔄 รีเฟรช</button>
+        <button id="btn-upload-all" class="btn btn-primary">🚀 อัปโหลดทั้งหมด</button>
+      </div>
+
+      <div id="progress-bar" class="progress-container" style="display:none;">
+        <div class="progress-info">
+          <span id="progress-text">กำลังอัปโหลด...</span>
+          <span id="progress-count">0/0</span>
+        </div>
+        <div class="progress-bar">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <p id="progress-file" class="progress-file"></p>
+      </div>
+
+      <div id="file-list" class="file-list">
+        <p class="empty-state">⚙️ กรุณาตั้งค่าโฟลเดอร์ก่อนใช้งาน</p>
+      </div>
+    </section>
+
+    <!-- Settings Tab -->
+    <section id="tab-settings" class="tab-content">
+      <form id="settings-form" class="settings-form">
+        <div class="form-group">
+          <label for="folder">📁 โฟลเดอร์วิดีโอ (path เต็ม)</label>
+          <input type="text" id="folder" name="folder" placeholder="/Users/you/Videos/youtube" required>
+          <small>ระบุ path ของโฟลเดอร์ที่เก็บวิดีโอที่ต้องการอัปโหลด</small>
+        </div>
+
+        <div class="form-group">
+          <label for="privacy">🔒 ระดับความเป็นส่วนตัว</label>
+          <select id="privacy" name="privacy">
+            <option value="public">🌐 สาธารณะ (Public)</option>
+            <option value="unlisted">🔗 ไม่แสดงในรายการ (Unlisted)</option>
+            <option value="private">🔒 ส่วนตัว (Private)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="deleteAfterUpload" name="deleteAfterUpload">
+            🗑️ ลบไฟล์หลังอัปโหลดสำเร็จ
+          </label>
+          <small>เมื่อเปิดใช้งาน ไฟล์วิดีโอจะถูกลบหลังอัปโหลดขึ้น YouTube สำเร็จ</small>
+        </div>
+
+        <div class="form-group">
+          <label for="defaultDescription">📝 คำอธิบายเริ่มต้น</label>
+          <textarea id="defaultDescription" name="defaultDescription" rows="3" placeholder="คำอธิบายวิดีโอ..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="defaultTags">🏷️ แท็กเริ่มต้น (คั่นด้วยคอมม่า)</label>
+          <input type="text" id="defaultTags" name="defaultTags" placeholder="vlog, thailand, daily">
+        </div>
+
+        <button type="submit" class="btn btn-primary">💾 บันทึกการตั้งค่า</button>
+      </form>
+    </section>
+
+    <!-- History Tab -->
+    <section id="tab-history" class="tab-content">
+      <div class="toolbar">
+        <button id="btn-clear-history" class="btn btn-danger">🗑️ ล้างประวัติ</button>
+      </div>
+      <div id="history-list" class="history-list">
+        <p class="empty-state">ยังไม่มีประวัติการอัปโหลด</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- Upload Modal -->
+  <div id="upload-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <h3>📤 อัปโหลดวิดีโอ</h3>
+      <form id="upload-form">
+        <input type="hidden" id="upload-filename">
+        <div class="form-group">
+          <label for="upload-title">ชื่อวิดีโอ</label>
+          <input type="text" id="upload-title" required>
+        </div>
+        <div class="form-group">
+          <label for="upload-description">คำอธิบาย</label>
+          <textarea id="upload-description" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="upload-tags">แท็ก (คั่นด้วยคอมม่า)</label>
+          <input type="text" id="upload-tags">
+        </div>
+        <div class="form-group">
+          <label for="upload-privacy">ความเป็นส่วนตัว</label>
+          <select id="upload-privacy">
+            <option value="public">🌐 สาธารณะ</option>
+            <option value="unlisted">🔗 ไม่แสดงในรายการ</option>
+            <option value="private">🔒 ส่วนตัว</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">ยกเลิก</button>
+          <button type="submit" class="btn btn-primary">🚀 อัปโหลด</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

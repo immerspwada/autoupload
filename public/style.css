@@ -1,0 +1,595 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  min-height: 100vh;
+  color: #e0e0e0;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  text-align: center;
+  padding: 30px 0 20px;
+}
+
+header h1 {
+  font-size: 2rem;
+  color: #ff4444;
+  margin-bottom: 5px;
+}
+
+.subtitle {
+  color: #aaa;
+  font-size: 0.95rem;
+}
+
+.auth-status {
+  margin-top: 15px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  display: inline-block;
+  font-size: 0.9rem;
+}
+
+.auth-status.connected {
+  background: rgba(76, 175, 80, 0.2);
+  border: 1px solid #4caf50;
+  color: #4caf50;
+}
+
+.auth-status.disconnected {
+  background: rgba(255, 152, 0, 0.2);
+  border: 1px solid #ff9800;
+  color: #ff9800;
+}
+
+.auth-status button {
+  margin-left: 10px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.auth-status .btn-login {
+  background: #ff4444;
+  color: white;
+}
+
+.auth-status .btn-logout {
+  background: #666;
+  color: white;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 5px;
+  margin: 20px 0;
+  border-bottom: 2px solid #333;
+  padding-bottom: 0;
+}
+
+.tab {
+  padding: 12px 24px;
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 0.95rem;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  color: #fff;
+}
+
+.tab.active {
+  color: #ff4444;
+  border-bottom-color: #ff4444;
+}
+
+.tab-content {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+/* Buttons */
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: #ff4444;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #cc3333;
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: #333;
+  color: #ddd;
+}
+
+.btn-secondary:hover {
+  background: #444;
+}
+
+.btn-danger {
+  background: #d32f2f;
+  color: white;
+}
+
+.btn-danger:hover {
+  background: #b71c1c;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* File List */
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.file-item {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 15px 20px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  transition: all 0.2s;
+}
+
+.file-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #555;
+}
+
+.file-item.uploaded {
+  border-color: #4caf50;
+  background: rgba(76, 175, 80, 0.05);
+}
+
+.file-icon {
+  font-size: 2rem;
+}
+
+.file-info {
+  flex: 1;
+}
+
+.file-name {
+  font-weight: 500;
+  color: #fff;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.file-meta {
+  font-size: 0.8rem;
+  color: #888;
+}
+
+.file-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.file-actions .btn {
+  padding: 8px 14px;
+  font-size: 0.8rem;
+}
+
+.badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.badge-success {
+  background: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+
+.badge-pending {
+  background: rgba(255, 152, 0, 0.2);
+  color: #ff9800;
+}
+
+/* Progress */
+.progress-container {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 0.9rem;
+}
+
+.progress-bar {
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff4444, #ff6b6b);
+  border-radius: 4px;
+  transition: width 0.5s ease;
+  width: 0%;
+}
+
+.progress-file {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: #888;
+}
+
+/* Settings Form */
+.settings-form {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 30px;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: #ddd;
+}
+
+.form-group small {
+  display: block;
+  margin-top: 4px;
+  color: #888;
+  font-size: 0.8rem;
+}
+
+.form-group input[type="text"],
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  padding: 12px 15px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #1a1a2e;
+  color: #fff;
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #ff4444;
+}
+
+.checkbox-label {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #ff4444;
+}
+
+/* History */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-item {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 15px 20px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.history-item .file-info a {
+  color: #ff6b6b;
+  text-decoration: none;
+}
+
+.history-item .file-info a:hover {
+  text-decoration: underline;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 30px;
+  width: 90%;
+  max-width: 500px;
+}
+
+.modal-content h3 {
+  margin-bottom: 20px;
+  color: #fff;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+  font-size: 1rem;
+}
+
+/* Toast notification */
+.toast {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  padding: 15px 25px;
+  border-radius: 8px;
+  color: white;
+  font-size: 0.9rem;
+  z-index: 2000;
+  animation: slideIn 0.3s ease;
+}
+
+.toast.success {
+  background: #4caf50;
+}
+
+.toast.error {
+  background: #d32f2f;
+}
+
+.toast.info {
+  background: #2196f3;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .container { padding: 10px; }
+  header h1 { font-size: 1.5rem; }
+  .file-item { flex-wrap: wrap; }
+  .file-actions { width: 100%; justify-content: flex-end; }
+  .tabs { overflow-x: auto; }
+  .tab { padding: 10px 16px; font-size: 0.85rem; }
+}
+
+/* Drop Zone */
+.drop-zone {
+  border: 3px dashed #555;
+  border-radius: 16px;
+  padding: 60px 30px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.02);
+  margin-bottom: 20px;
+}
+
+.drop-zone:hover {
+  border-color: #ff4444;
+  background: rgba(255, 68, 68, 0.05);
+}
+
+.drop-zone.drag-over {
+  border-color: #ff4444;
+  background: rgba(255, 68, 68, 0.1);
+  transform: scale(1.02);
+  box-shadow: 0 0 30px rgba(255, 68, 68, 0.2);
+}
+
+.drop-zone-content .drop-icon {
+  font-size: 4rem;
+  margin-bottom: 15px;
+  animation: bounce 2s infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.drop-zone-content h2 {
+  color: #fff;
+  margin-bottom: 8px;
+  font-size: 1.4rem;
+}
+
+.drop-zone-content p {
+  color: #888;
+  margin-bottom: 5px;
+}
+
+.drop-formats {
+  font-size: 0.8rem !important;
+  color: #666 !important;
+  margin-top: 10px !important;
+}
+
+/* Drop Queue */
+.drop-queue {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.drop-queue h3 {
+  color: #fff;
+  margin-bottom: 15px;
+}
+
+.drop-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 15px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 15px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #444;
+  border-radius: 8px;
+}
+
+.queue-item .queue-icon { font-size: 1.3rem; }
+.queue-item .queue-info { flex: 1; }
+.queue-item .queue-name { color: #fff; font-size: 0.9rem; word-break: break-all; }
+.queue-item .queue-size { color: #888; font-size: 0.75rem; }
+
+.queue-item .queue-status {
+  font-size: 0.8rem;
+  padding: 3px 8px;
+  border-radius: 10px;
+}
+
+.queue-item .queue-status.pending { background: rgba(255, 152, 0, 0.2); color: #ff9800; }
+.queue-item .queue-status.uploading { background: rgba(33, 150, 243, 0.2); color: #2196f3; }
+.queue-item .queue-status.done { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
+.queue-item .queue-status.error { background: rgba(244, 67, 54, 0.2); color: #f44336; }
+
+.queue-item .btn-remove {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 4px;
+}
+
+.queue-item .btn-remove:hover { color: #f44336; }
+
+.drop-queue-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* Drop Results */
+.drop-results {
+  margin-top: 20px;
+}
+
+.drop-result-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 15px;
+  background: rgba(76, 175, 80, 0.05);
+  border: 1px solid #4caf50;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.drop-result-item.error {
+  border-color: #f44336;
+  background: rgba(244, 67, 54, 0.05);
+}
+
+.drop-result-item a {
+  color: #ff6b6b;
+  text-decoration: none;
+}
+
+.drop-result-item a:hover { text-decoration: underline; }
