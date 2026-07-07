@@ -59,31 +59,144 @@ function isDuplicateTikTok(videoUrl, videoId) {
 // ==================== TikTok Batch Progress (SSE) ====================
 let tiktokProgress = { current: 0, total: 0, currentFile: '', status: 'idle', phase: '', results: [] };
 
-// Search TikTok videos by keyword
+// Search TikTok videos by keyword (single or multiple)
+// Accepts either { keyword: "cat" } or { keywords: ["cat", "dog", "..."] }
+// Multiple keywords can also be sent as one comma/newline-separated string in `keyword`.
 router.post('/search', async (req, res) => {
-  const { keyword, count } = req.body;
-  if (!keyword) return res.status(400).json({ error: 'กรุณาระบุคีย์เวิร์ด' });
+  const { keyword, keywords, count } = req.body;
+
+  // Normalize input into a list of keywords
+  let keywordList = [];
+  if (Array.isArray(keywords)) {
+    keywordList = keywords;
+  } else if (typeof keywords === 'string') {
+    keywordList = keywords.split(/[,\n]/);
+  } else if (typeof keyword === 'string') {
+    keywordList = keyword.split(/[,\n]/);
+  }
+  keywordList = keywordList.map(k => k.trim()).filter(Boolean);
+
+  if (keywordList.length === 0) {
+    return res.status(400).json({ error: 'กรุณาระบุคีย์เวิร์ดอย่างน้อย 1 คำ' });
+  }
+
+  // Cap to avoid abuse / excessive upstream load
+  const MAX_KEYWORDS = 15;
+  if (keywordList.length > MAX_KEYWORDS) {
+    keywordList = keywordList.slice(0, MAX_KEYWORDS);
+  }
+
+  const countPerKeyword = count || 12;
 
   try {
-    const videos = await tiktokService.searchVideos(keyword, count || 12);
+    let videos, perKeyword;
 
-    // Mark duplicates in search results
+    if (keywordList.length === 1) {
+      videos = await tiktokService.searchVideos(keywordList[0], countPerKeyword);
+      videos = videos.map(v => ({ ...v, matchedKeywords: [keywordList[0]] }));
+      perKeyword = [{ keyword: keywordList[0], found: videos.length, error: null }];
+    } else {
+      const result = await tiktokService.searchMultipleKeywords(keywordList, countPerKeyword);
+      videos = result.videos;
+      perKeyword = result.perKeyword;
+    }
+
+    // Mark duplicates + attach SEO virality score & monetization risk to every result
+    // so the UI can sort/filter/flag without an extra round-trip per video.
     const videosWithDuplicateInfo = videos.map(video => {
       const videoId = extractTikTokVideoId(video.videoUrl);
       const dupCheck = isDuplicateTikTok(video.videoUrl, videoId);
+      const virality = seoService.calculateViralityScore(video);
+      const validation = seoService.validateForMonetization(video, video.desc || '');
       return {
         ...video,
         alreadyUploaded: dupCheck.duplicate,
         youtubeUrl: dupCheck.duplicate ? dupCheck.record.youtube_url : null,
-        uploadedAt: dupCheck.duplicate ? dupCheck.record.uploaded_at : null
+        uploadedAt: dupCheck.duplicate ? dupCheck.record.uploaded_at : null,
+        virality,
+        monetizationStatus: validation.status // 'ok' | 'warning' | 'blocked'
       };
     });
 
-    res.json({ videos: videosWithDuplicateInfo, keyword });
+    // Best content first: sort by virality score (duplicates/blocked pushed down)
+    videosWithDuplicateInfo.sort((a, b) => {
+      if (a.alreadyUploaded !== b.alreadyUploaded) return a.alreadyUploaded ? 1 : -1;
+      return (b.virality?.score || 0) - (a.virality?.score || 0);
+    });
+
+    res.json({
+      videos: videosWithDuplicateInfo,
+      keywords: keywordList,
+      keyword: keywordList.join(', '), // backward-compat for old frontend
+      perKeyword,
+      totalFound: videosWithDuplicateInfo.length
+    });
   } catch (error) {
     logger.error('TikTok search error', { error: error.message });
     res.status(500).json({ error: error.message });
   }
+});
+
+// Discover trending videos WITHOUT a keyword (browse what's hot right now)
+router.get('/trending', async (req, res) => {
+  const region = req.query.region || 'TH';
+  const count = parseInt(req.query.count) || 12;
+
+  try {
+    const videos = await tiktokService.getTrending(region, count);
+    const enriched = videos.map(video => {
+      const videoId = extractTikTokVideoId(video.videoUrl);
+      const dupCheck = isDuplicateTikTok(video.videoUrl, videoId);
+      const virality = seoService.calculateViralityScore(video);
+      const validation = seoService.validateForMonetization(video, video.desc || '');
+      return {
+        ...video,
+        alreadyUploaded: dupCheck.duplicate,
+        youtubeUrl: dupCheck.duplicate ? dupCheck.record.youtube_url : null,
+        virality,
+        monetizationStatus: validation.status
+      };
+    }).sort((a, b) => (b.virality?.score || 0) - (a.virality?.score || 0));
+
+    res.json({ videos: enriched, region, totalFound: enriched.length });
+  } catch (error) {
+    logger.error('TikTok trending error', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Fetch latest videos from a specific creator (@username) — track creators
+// whose content performs well and grab their newest clips.
+router.get('/creator/:username', async (req, res) => {
+  const { username } = req.params;
+  const count = parseInt(req.query.count) || 12;
+
+  try {
+    const videos = await tiktokService.getCreatorVideos(username, count);
+    const enriched = videos.map(video => {
+      const videoId = extractTikTokVideoId(video.videoUrl);
+      const dupCheck = isDuplicateTikTok(video.videoUrl, videoId);
+      const virality = seoService.calculateViralityScore(video);
+      const validation = seoService.validateForMonetization(video, video.desc || '');
+      return {
+        ...video,
+        alreadyUploaded: dupCheck.duplicate,
+        youtubeUrl: dupCheck.duplicate ? dupCheck.record.youtube_url : null,
+        virality,
+        monetizationStatus: validation.status
+      };
+    }).sort((a, b) => (b.virality?.score || 0) - (a.virality?.score || 0));
+
+    res.json({ videos: enriched, username, totalFound: enriched.length });
+  } catch (error) {
+    logger.error('TikTok creator fetch error', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Provider reliability stats (which downloader is currently most trustworthy)
+router.get('/provider-stats', (req, res) => {
+  res.json(tiktokService.getProviderStats());
 });
 
 // Check if a TikTok URL is a duplicate
@@ -140,6 +253,24 @@ router.post('/download-and-upload', async (req, res) => {
     }
   }
 
+  // ★ Monetization safety gate — block clearly policy-violating content
+  // BEFORE downloading/uploading, unless the user explicitly forces it.
+  // This is the enforcement layer for seoService.validateForMonetization,
+  // which previously only generated a report but never blocked anything.
+  if (!force) {
+    const preCheck = seoService.validateForMonetization(
+      { desc: title || req.body.desc || '', duration: req.body.duration || 0 },
+      title || ''
+    );
+    if (preCheck.status === 'blocked') {
+      return res.status(422).json({
+        error: 'เนื้อหานี้ผิดนโยบาย YouTube — ถูกบล็อกอัตโนมัติเพื่อป้องกันการ demonetize/strike',
+        blocked: true,
+        validation: preCheck
+      });
+    }
+  }
+
   try {
     // Step 1: Download from TikTok (no watermark)
     const downloadResult = await tiktokService.downloadNoWatermark(videoUrl, filename);
@@ -160,6 +291,18 @@ router.post('/download-and-upload', async (req, res) => {
       };
       const seoOptions = { schedulePublish: config.autoSchedule || false };
       const metadata = seoService.generateMetadata(tiktokData, seoOptions);
+
+      // Re-validate now that we have the real downloaded filename/desc too —
+      // catches risky content that only shows up after download (e.g. no
+      // desc was passed by the caller but the file itself hints at it).
+      if (metadata.validation.status === 'blocked' && !force) {
+        if (fs.existsSync(downloadResult.filepath)) fs.unlinkSync(downloadResult.filepath);
+        return res.status(422).json({
+          error: 'เนื้อหานี้ผิดนโยบาย YouTube — ถูกบล็อกอัตโนมัติเพื่อป้องกันการ demonetize/strike',
+          blocked: true,
+          validation: metadata.validation
+        });
+      }
 
       videoTitle = title || metadata.title; // User override > SEO
       videoDesc = description || metadata.description;
@@ -238,7 +381,7 @@ router.post('/download-and-upload', async (req, res) => {
 
 // Batch download and upload multiple TikTok videos
 router.post('/batch-upload', async (req, res) => {
-  const { videos, privacy, description, tags } = req.body;
+  const { videos, privacy, description, tags, force } = req.body;
   if (!videos || !Array.isArray(videos) || videos.length === 0) {
     return res.status(400).json({ error: 'กรุณาเลือกวิดีโออย่างน้อย 1 รายการ' });
   }
@@ -252,7 +395,7 @@ router.post('/batch-upload', async (req, res) => {
   res.json({ success: true, total: videos.length, message: 'เริ่มดาวน์โหลดและอัปโหลดในพื้นหลัง' });
 
   // Process in background
-  processTikTokBatch(videos, { privacy, description, tags });
+  processTikTokBatch(videos, { privacy, description, tags, force });
 });
 
 // TikTok batch progress (SSE)
@@ -279,6 +422,10 @@ async function processTikTokBatch(videos, options) {
   const defaultTags = options.tags || config.defaultTags || '';
   const seoMode = config.seoMode || 'auto';
 
+  // ★ Sort by virality score (highest first) — process best content first
+  // so if the batch fails mid-way, at least the viral clips made it through
+  videos.sort((a, b) => (b.viralityScore || 0) - (a.viralityScore || 0));
+
   tiktokProgress = { current: 0, total: videos.length, currentFile: '', status: 'processing', phase: '', results: [] };
 
   for (let i = 0; i < videos.length; i++) {
@@ -300,9 +447,34 @@ async function processTikTokBatch(videos, options) {
       continue;
     }
 
+    // ★ Monetization safety gate — skip clearly policy-violating content
+    // instead of silently uploading it (unless the batch explicitly forces it).
+    if (!options.force) {
+      const preCheck = seoService.validateForMonetization(
+        { desc: video.desc || video.title || '', duration: video.duration || 0 },
+        video.title || ''
+      );
+      if (preCheck.status === 'blocked') {
+        logger.warn('Skipping blocked TikTok video in batch', { videoUrl: video.videoUrl, issues: preCheck.issues });
+        tiktokProgress.results.push({
+          title: video.title || video.desc || `วิดีโอ ${i + 1}`,
+          success: false,
+          skipped: true,
+          blocked: true,
+          error: `บล็อกอัตโนมัติ: ${preCheck.issues.map(i => i.message).join('; ')}`
+        });
+        continue;
+      }
+    }
+
     try {
       // Phase 1: Download
       tiktokProgress.phase = 'downloading';
+      logger.info(`Batch processing video ${i+1}/${videos.length}`, { 
+        title: video.title?.substring(0,50), 
+        viralityScore: video.viralityScore,
+        url: video.videoUrl 
+      });
       const downloadResult = await tiktokService.downloadNoWatermark(video.videoUrl, video.title);
 
       // Phase 2: Generate SEO metadata

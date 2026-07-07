@@ -82,6 +82,7 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/tiktok', tiktokRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/seo', seoRoutes);
+app.use('/api/quota', require('./src/routes/quota'));
 
 // Event Bus API
 app.get('/api/events/history', (req, res) => {

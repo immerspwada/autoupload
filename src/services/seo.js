@@ -80,14 +80,25 @@ const PRIME_TIME_HOURS = {
   ]
 };
 
-// Banned/risky keywords that may prevent monetization
-const MONETIZATION_RISK_KEYWORDS = [
-  'เซ็กส์', 'sex', 'porn', 'xxx', 'nude',
-  'ยาเสพติด', 'drug', 'weed', 'กัญชา',
-  'ฆ่า', 'kill', 'murder', 'suicide', 'ฆ่าตัวตาย',
-  'ระเบิด', 'bomb', 'weapon', 'อาวุธ', 'ปืน',
-  'พนัน', 'gambling', 'casino', 'แทงบอล', 'หวย'
-];
+// Banned/risky keywords that may prevent monetization.
+// level 'block' → hard block (clear policy violation, e.g. gambling/drugs/violence).
+// level 'warn'  → borderline / suggestive content that risks demonetization
+//                 (sexualized/thirst-trap content, reused-content bait) but
+//                 isn't automatically illegal — flagged for human review.
+const MONETIZATION_RISK_KEYWORDS = {
+  block: [
+    'เซ็กส์', 'เซ็กซ์', 'sex', 'porn', 'xxx', 'nude', 'oyt',
+    'ยาเสพติด', 'drug', 'weed', 'กัญชา', 'ยาบ้า', 'ยาไอซ์',
+    'ฆ่า', 'kill', 'murder', 'suicide', 'ฆ่าตัวตาย', 'ทำร้ายตัวเอง',
+    'ระเบิด', 'bomb', 'weapon', 'อาวุธ', 'ปืน',
+    'พนัน', 'gambling', 'casino', 'แทงบอล', 'หวย', 'สล็อต', 'บาคาร่า'
+  ],
+  warn: [
+    'เซ๊กซี่', 'เซ็กซี่', 'sexy', 'ยั่ว', 'ขย่ม', 'ยั่วยวน', 'เงี่ยน',
+    'thirst', 'onlyfans', 'ขายตัว', 'นวดแผ่น', 'ชุดชั้นใน', 'บิกินี่',
+    'โป๊', 'วาบหวาม', 'โชว์เนื้อหนัง'
+  ]
+};
 
 // Common filler words to clean from titles
 const FILLER_WORDS = ['fyp', 'foryou', 'foryoupage', 'viral', 'trending', 'xyzbca', 'tiktok', '#'];
@@ -110,6 +121,7 @@ class SEOService {
     const categoryId = this.detectCategory(tiktokData);
     const publishAt = options.schedulePublish ? this.getOptimalPublishTime() : null;
     const validation = this.validateForMonetization(tiktokData, title);
+    const virality = this.calculateViralityScore(tiktokData);
 
     return {
       title,
@@ -118,7 +130,76 @@ class SEOService {
       categoryId,
       publishAt,
       validation,
+      virality,
       privacy: publishAt ? 'private' : (config.privacy || 'public') // Private if scheduled
+    };
+  }
+
+  /**
+   * Calculate a 0-100 "virality score" for a TikTok video based on
+   * engagement ratios (not raw counts — a 10k-view clip with 20% like
+   * rate beats a 1M-view clip with 0.1% like rate for predicting how
+   * it'll perform once re-uploaded). Combines:
+   *   - like rate     (likes / views)      — strongest signal of quality
+   *   - comment rate  (comments / views)   — signals discussion/hook
+   *   - share rate    (shares / views)      — strongest signal of reach potential
+   *   - recency       (newer = more likely still riding algorithm momentum)
+   *   - absolute views (log-scaled, small boost — avoids over-rewarding tiny sample sizes)
+   */
+  calculateViralityScore(tiktokData) {
+    const views = tiktokData.playCount || 0;
+    const likes = tiktokData.likeCount || 0;
+    const comments = tiktokData.commentCount || 0;
+    const shares = tiktokData.shareCount || 0;
+    const createTime = tiktokData.createTime; // unix seconds
+
+    if (views < 50) {
+      // Not enough data to score meaningfully
+      return { score: 0, tier: 'unknown', breakdown: { reason: 'ยอดดูน้อยเกินไป (ต่ำกว่า 50) ยังไม่มีข้อมูลพอประเมิน' } };
+    }
+
+    const likeRate = likes / views;       // typically 0.02–0.25 for good content
+    const commentRate = comments / views; // typically 0.0005–0.01
+    const shareRate = shares / views;     // typically 0.001–0.05, strongest viral signal
+
+    // Normalize each ratio against realistic "great content" ceilings, cap at 1
+    const likeScore = Math.min(likeRate / 0.15, 1) * 40;      // up to 40 pts
+    const commentScore = Math.min(commentRate / 0.008, 1) * 15; // up to 15 pts
+    const shareScore = Math.min(shareRate / 0.03, 1) * 30;     // up to 30 pts (shares matter most for re-upload virality)
+
+    // Recency bonus: fresher clips are more likely still trending / less saturated
+    let recencyScore = 5; // default small bonus if unknown
+    if (createTime) {
+      const ageDays = (Date.now() / 1000 - createTime) / 86400;
+      if (ageDays <= 2) recencyScore = 15;
+      else if (ageDays <= 7) recencyScore = 12;
+      else if (ageDays <= 30) recencyScore = 8;
+      else if (ageDays <= 90) recencyScore = 4;
+      else recencyScore = 1;
+    }
+
+    // Small log-scaled absolute-views bonus (up to 10pts) — separates a
+    // viral clip with 5M views from one with 5K views at similar ratios
+    const viewsScore = Math.min(Math.log10(views + 1) / 7, 1) * 10;
+
+    const rawScore = likeScore + commentScore + shareScore + recencyScore + viewsScore;
+    const score = Math.round(Math.min(rawScore, 100));
+
+    let tier;
+    if (score >= 75) tier = 'viral';       // 🔥 rework immediately
+    else if (score >= 55) tier = 'hot';    // 📈 strong candidate
+    else if (score >= 35) tier = 'decent'; // 👍 worth trying
+    else tier = 'low';                     // 📉 low potential
+
+    return {
+      score,
+      tier,
+      breakdown: {
+        likeRate: +(likeRate * 100).toFixed(2),
+        commentRate: +(commentRate * 100).toFixed(3),
+        shareRate: +(shareRate * 100).toFixed(3),
+        ageDays: createTime ? Math.round((Date.now() / 1000 - createTime) / 86400) : null
+      }
     };
   }
 
@@ -356,15 +437,30 @@ class SEOService {
       });
     }
 
-    // Check 2: Risky keywords
-    for (const keyword of MONETIZATION_RISK_KEYWORDS) {
+    // Check 2: Risky keywords — hard blocks (illegal/policy violation) first
+    let blocked = false;
+    for (const keyword of MONETIZATION_RISK_KEYWORDS.block) {
       if (text.includes(keyword)) {
         issues.push({
           level: 'error',
           code: 'RISKY_CONTENT',
-          message: `พบคำที่อาจทำให้ไม่ได้ monetize: "${keyword}"`
+          message: `พบคำที่ผิดนโยบาย YouTube ชัดเจน: "${keyword}" — ห้ามอัปโหลด`
         });
-        break; // One is enough to flag
+        blocked = true;
+        break;
+      }
+    }
+    // Borderline/suggestive content — warn but don't hard-block (needs review)
+    if (!blocked) {
+      for (const keyword of MONETIZATION_RISK_KEYWORDS.warn) {
+        if (text.includes(keyword)) {
+          issues.push({
+            level: 'warning',
+            code: 'SUGGESTIVE_CONTENT',
+            message: `พบคำที่เสี่ยง demonetize/reused-content policy: "${keyword}" — ควรตรวจสอบก่อนอัปโหลด`
+          });
+          break;
+        }
       }
     }
 

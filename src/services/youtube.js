@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
 const logger = require('../utils/logger');
+const quotaManager = require('./quota');
 
 const TOKEN_PATH = path.join(__dirname, '../../token.json');
 const CRED_PATH = path.join(__dirname, '../../client_secret.json');
@@ -83,6 +84,16 @@ class YouTubeService {
   }
 
   async uploadVideo({ filepath, title, description, tags, privacy, categoryId, publishAt, madeForKids, onProgress }) {
+    // ★ Check quota BEFORE starting upload
+    const quotaCheck = quotaManager.check(1600); // Upload costs 1,600 units
+    if (!quotaCheck.allowed) {
+      const error = new Error('YouTube API quota exceeded. Uploads will reset at midnight PST.');
+      error.code = 'QUOTA_EXCEEDED';
+      error.quotaInfo = quotaCheck;
+      logger.error('Upload blocked by quota limit', quotaCheck);
+      throw error;
+    }
+
     const client = this.getOAuth2Client();
     if (!client || !client.credentials || !client.credentials.access_token) {
       throw new Error('Not authenticated with YouTube');
@@ -91,7 +102,15 @@ class YouTubeService {
     const youtube = google.youtube({ version: 'v3', auth: client });
     const fileSize = fs.statSync(filepath).size;
 
-    logger.info('Starting upload', { title, filepath, size: fileSize, categoryId, publishAt });
+    logger.info('Starting upload', { 
+      title, 
+      filepath, 
+      size: fileSize, 
+      categoryId, 
+      publishAt,
+      quotaUsed: quotaCheck.used,
+      quotaRemaining: quotaCheck.remaining 
+    });
 
     // Build request body
     const requestBody = {
@@ -135,6 +154,9 @@ class YouTubeService {
     const videoId = response.data.id;
     const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
+    // ★ Consume quota AFTER successful upload
+    quotaManager.consume(1600, 'video_upload');
+
     logger.info('Upload successful', { videoId, title, categoryId, scheduled: !!publishAt });
 
     return { videoId, youtubeUrl, title: response.data.snippet?.title, scheduled: !!publishAt };
@@ -165,6 +187,20 @@ class YouTubeService {
       logger.warn('Failed to get channel info', { error: err.message });
     }
     return null;
+  }
+
+  /**
+   * Get current quota status (for dashboard)
+   */
+  getQuotaStatus() {
+    return quotaManager.getStatus();
+  }
+
+  /**
+   * Estimate how many uploads can still be done
+   */
+  getUploadsRemaining() {
+    return quotaManager.getUploadsRemaining();
   }
 }
 
