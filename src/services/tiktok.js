@@ -256,8 +256,13 @@ class TikTokService {
       const url = `https://www.tikwm.com/api/feed/list?region=${encodeURIComponent(region)}&count=${count}`;
       const response = await this._fetchTikwmWithRetry(url);
 
-      if (response && response.code === 0 && Array.isArray(response.data)) {
-        for (const video of response.data) {
+      if (response && response.code === 0) {
+        // tikwm feed/list can return videos in data[] or data.videos[]
+        const videoList = Array.isArray(response.data)
+          ? response.data
+          : (Array.isArray(response.data?.videos) ? response.data.videos : []);
+
+        for (const video of videoList) {
           const id = video.video_id || video.id;
           if (!id || seenIds.has(id)) continue;
           seenIds.add(id);
@@ -563,7 +568,10 @@ class TikTokService {
   /**
    * Download file from URL
    */
-  _downloadFile(url, filepath) {
+  _downloadFile(url, filepath, redirectDepth = 0) {
+    if (redirectDepth > 5) {
+      return Promise.reject(new Error('Too many redirects (max 5)'));
+    }
     return new Promise((resolve, reject) => {
       const protocol = url.startsWith('https') ? https : http;
       const file = fs.createWriteStream(filepath);
@@ -576,14 +584,14 @@ class TikTokService {
       }, (response) => {
         // Handle redirects
         if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          file.close();
-          fs.unlinkSync(filepath);
-          return this._downloadFile(response.headers.location, filepath).then(resolve).catch(reject);
+          try { file.close(); } catch (_) {}
+          try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
+          return this._downloadFile(response.headers.location, filepath, redirectDepth + 1).then(resolve).catch(reject);
         }
 
         if (response.statusCode !== 200) {
-          file.close();
-          fs.unlinkSync(filepath);
+          try { file.close(); } catch (_) {}
+          try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
           return reject(new Error(`HTTP ${response.statusCode}`));
         }
 
@@ -594,15 +602,15 @@ class TikTokService {
       });
 
       request.on('error', (err) => {
-        file.close();
-        if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+        try { file.close(); } catch (_) {}
+        try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
         reject(err);
       });
 
       // Timeout after 60 seconds
       request.setTimeout(60000, () => {
         request.destroy();
-        if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+        try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
         reject(new Error('Download timeout'));
       });
     });
@@ -703,15 +711,21 @@ class TikTokService {
       .filter(f => f.endsWith('.mp4'))
       .map(f => {
         const filepath = path.join(this.downloadDir, f);
-        const stats = fs.statSync(filepath);
-        return {
-          filename: f,
-          filepath,
-          size: stats.size,
-          sizeFormatted: this._formatSize(stats.size),
-          modified: stats.mtime
-        };
+        try {
+          const stats = fs.statSync(filepath);
+          return {
+            filename: f,
+            filepath,
+            size: stats.size,
+            sizeFormatted: this._formatSize(stats.size),
+            modified: stats.mtime
+          };
+        } catch (_) {
+          // File was deleted between readdir and stat — skip it
+          return null;
+        }
       })
+      .filter(Boolean)
       .sort((a, b) => b.modified - a.modified);
   }
 

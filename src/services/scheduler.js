@@ -13,6 +13,80 @@ class Scheduler {
     this.interval = null;
     this.watcher = null;
     this.watchedFolder = null;
+    this._quotaWaitTimer = null;   // timer รอ quota reset
+    this._quotaPaused = false;     // สถานะหยุดชั่วคราวเพราะ quota หมด
+  }
+
+  /**
+   * คำนวณ milliseconds จนถึงเที่ยงคืน PST (UTC-8) รอบถัดไป
+   * YouTube quota reset ตอนนี้ทุกวัน
+   */
+  _msUntilQuotaReset() {
+    const now = new Date();
+    // PST = UTC-8
+    const PST_OFFSET_MS = -8 * 60 * 60 * 1000;
+    const localOffsetMs = now.getTimezoneOffset() * 60 * 1000;
+
+    // เวลาปัจจุบันใน PST
+    const pstNow = new Date(now.getTime() + localOffsetMs + PST_OFFSET_MS);
+
+    // เที่ยงคืน PST วันถัดไป
+    const nextMidnightPST = new Date(pstNow);
+    nextMidnightPST.setHours(24, 2, 0, 0); // +2 นาที buffer หลัง reset
+
+    // แปลงกลับเป็น local time และหา diff
+    const nextResetLocal = new Date(nextMidnightPST.getTime() - localOffsetMs - PST_OFFSET_MS);
+    return Math.max(0, nextResetLocal.getTime() - now.getTime());
+  }
+
+  /**
+   * หยุดรอ quota reset แล้วเริ่ม scan อัตโนมัติหลัง reset
+   */
+  _waitForQuotaReset() {
+    if (this._quotaWaitTimer) return; // กำลังรอแล้ว
+
+    const msLeft = this._msUntilQuotaReset();
+    const resetAt = new Date(Date.now() + msLeft);
+    this._quotaPaused = true;
+
+    logger.info('⏸️  Quota หมดวันนี้ — หยุดรอจนถึง quota reset', {
+      resetAt: resetAt.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+      waitHours: (msLeft / 3600000).toFixed(1)
+    });
+
+    this._quotaWaitTimer = setTimeout(() => {
+      this._quotaWaitTimer = null;
+      this._quotaPaused = false;
+      logger.info('✅ Quota reset แล้ว — เริ่ม scan อัตโนมัติ');
+      this.scan();
+    }, msLeft);
+  }
+
+  /**
+   * เช็ค quota ก่อน scan — ถ้าหมดให้รอ reset
+   * @returns {boolean} true = มี quota เพียงพอ
+   */
+  _checkQuotaBeforeScan() {
+    try {
+      const quotaManager = require('./quota');
+      const status = quotaManager.getStatus();
+      if (status.uploadsRemaining <= 0) {
+        this._waitForQuotaReset();
+        return false;
+      }
+      // ถ้าหลุดจาก pause แล้ว quota กลับมาแล้ว clear flag
+      if (this._quotaPaused) {
+        this._quotaPaused = false;
+        if (this._quotaWaitTimer) {
+          clearTimeout(this._quotaWaitTimer);
+          this._quotaWaitTimer = null;
+        }
+      }
+      return true;
+    } catch (err) {
+      // ถ้าโหลด quotaManager ไม่ได้ ให้ทำต่อ (ไม่บล็อก)
+      return true;
+    }
   }
 
   start() {
@@ -39,6 +113,12 @@ class Scheduler {
       clearInterval(this.interval);
       this.interval = null;
     }
+    // ยกเลิก quota-wait timer ถ้ากำลังรออยู่
+    if (this._quotaWaitTimer) {
+      clearTimeout(this._quotaWaitTimer);
+      this._quotaWaitTimer = null;
+    }
+    this._quotaPaused = false;
     this.stopWatcher();
     logger.info('Scheduler stopped');
   }
@@ -82,6 +162,11 @@ class Scheduler {
   }
 
   scan() {
+    // ถ้า quota หมด → รอ reset แล้วกลับมาใหม่เอง
+    if (!this._checkQuotaBeforeScan()) {
+      return { scanned: 0, queued: 0, reason: 'quota_exhausted' };
+    }
+
     const config = settings.load();
     const folder = config.folder;
     if (!folder || !fs.existsSync(folder)) {
@@ -195,7 +280,14 @@ class Scheduler {
   }
 
   getConfig() {
-    return schedulerStore.load();
+    const config = schedulerStore.load();
+    return {
+      ...config,
+      quotaPaused: this._quotaPaused,
+      quotaResumeAt: this._quotaWaitTimer
+        ? new Date(Date.now() + this._msUntilQuotaReset()).toISOString()
+        : null
+    };
   }
 
   updateConfig(newConfig) {

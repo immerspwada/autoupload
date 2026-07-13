@@ -1,71 +1,303 @@
-# 🎬 YouTube Auto Uploader
+# 🎬 YouTube Auto Uploader v2.1
 
-อัปโหลดวิดีโอขึ้น YouTube แบบอัตโนมัติจากโฟลเดอร์ที่กำหนด ไม่ซ้ำ พร้อมลบไฟล์หลังอัปโหลด
+## ⚡ ระบบอัปโหลด YouTube อัตโนมัติ พร้อม TikTok Integration
 
-## ✨ ฟีเจอร์
+**เป้าหมาย:** สร้างรายได้จาก YouTube Ad Revenue (Monetization) 💰
 
-- 📁 เลือกโฟลเดอร์วิดีโอที่ต้องการอัปโหลด
-- 🚫 ป้องกันอัปโหลดซ้ำ (ตรวจสอบจากฐานข้อมูล)
-- 🗑️ ลบไฟล์อัตโนมัติหลังอัปโหลดสำเร็จ (เลือกเปิด/ปิดได้)
-- 🌐 ตั้งค่าสาธารณะ (Public) ได้
-- 📤 อัปโหลดทีละไฟล์ หรืออัปโหลดทั้งโฟลเดอร์
-- 📋 ประวัติการอัปโหลดพร้อมลิงก์ YouTube
-- 🎨 UI เว็บไซต์สวยงาม ใช้งานง่าย
+### 🚀 ฟีเจอร์หลัก
 
-## 🛠️ ขั้นตอนการติดตั้ง
+1. **📤 Upload YouTube** - อัปโหลดวิดีโอแบบเดี่ยว/แบบ batch พร้อม queue
+2. **🎵 TikTok Downloader** - ดาวน์โหลด TikTok (no watermark) + virality scoring
+3. **👥 Multi-Account** - จัดการหลาย YouTube accounts พร้อม quota tracking แยกกัน
+4. **💎 Auto SEO** - สร้าง title/tags/category อัตโนมัติเพื่อเพิ่มยอดดู
+5. **⏰ Scheduler** - ตั้งเวลาอัปโหลดอัตโนมัติ
+6. **📊 Dashboard** - ติดตามสถิติและ quota real-time
+7. **🎯 Smart Quota** - จัดการ YouTube API quota อัจฉริยะ
 
-### 1. ติดตั้ง Dependencies
+---
+
+## 📦 Installation
 
 ```bash
-cd autoupload
 npm install
+npm start
+# เปิด http://localhost:3000
 ```
 
-### 2. ตั้งค่า YouTube API (สำคัญมาก!)
+---
 
-1. ไปที่ [Google Cloud Console](https://console.cloud.google.com/)
-2. สร้าง Project ใหม่ (หรือเลือก project ที่มีอยู่)
-3. เปิดใช้งาน **YouTube Data API v3**:
-   - ไปที่ APIs & Services > Library
-   - ค้นหา "YouTube Data API v3"
-   - คลิก Enable
-4. สร้าง OAuth 2.0 Credentials:
-   - ไปที่ APIs & Services > Credentials
-   - คลิก "+ CREATE CREDENTIALS" > OAuth client ID
-   - Application type: **Web application**
-   - ตั้งชื่อตามต้องการ
-   - Authorized redirect URIs: `http://localhost:3000/oauth2callback`
-   - คลิก Create
-5. ดาวน์โหลดไฟล์ JSON (คลิก Download JSON)
-6. เปลี่ยนชื่อไฟล์เป็น `client_secret.json` แล้ววางในโฟลเดอร์ `autoupload/`
+## 🎯 ฟีเจอร์ทั้งหมด (11 ฟีเจอร์)
 
-### 3. รันแอป
+### Core Features
+- ✅ **Dashboard** - ภาพรวมระบบ + สถิติ
+- ✅ **Upload** - อัปโหลดวิดีโอ (single/batch)
+- ✅ **TikTok** - ดาวน์โหลด + อัปโหลด TikTok → YouTube
+- ✅ **Accounts** - จัดการหลาย YouTube accounts
+- ✅ **Files** - ดูไฟล์ที่ดาวน์โหลด
+- ✅ **Queue** - ระบบคิวอัปโหลด + retry
+- ✅ **Scheduler** - ตั้งเวลาอัปโหลดอัตโนมัติ
+- ✅ **SEO** - ตั้งค่า SEO automation
+- ✅ **Activity** - Real-time event log
+- ✅ **History** - ประวัติการอัปโหลด
+- ✅ **Settings** - ตั้งค่าระบบ
 
+---
+
+## 🔥 ฟีเจอร์เด่น
+
+### 1. TikTok Integration 🎵
+```
+- ค้นหา TikTok ด้วย keyword
+- ดาวน์โหลด no watermark
+- Virality scoring (🔥/📈/👍/📉)
+- Monetization check (✓/⚠️/🚫)
+- Auto SEO (title/tags/category)
+- Batch download + upload
+```
+
+### 2. Multi-Account System 👥
+```
+- เพิ่มได้ไม่จำกัด YouTube accounts
+- Quota tracking แยกต่าง account (10,000 units each)
+- สลับ account คลิกเดียว
+- OAuth per account
+- Channel info display
+```
+
+### 3. Smart Quota Management 🎯
+```
+- Real-time quota tracking
+- Auto-reset เที่ยงคืน PST
+- Smart filtering (อัปคลิปดีเมื่อ quota น้อย)
+- Extended quota support (1M+ units/day)
+- 6 videos/day per account (default)
+```
+
+### 4. SEO Automation 💎
+```
+- Auto-generate title/description/tags
+- Category detection (26 YouTube categories)
+- Prime-time scheduling (19:00-21:00)
+- Monetization optimization
+- Viral content prioritization
+```
+
+---
+
+## 🚀 Quick Start
+
+### 1. เริ่มต้นใช้งาน
 ```bash
 npm start
+# เปิด http://localhost:3000
 ```
 
-เปิดเบราว์เซอร์ไปที่: **http://localhost:3000**
+### 2. Login YouTube
+```
+1. เปิดหน้า Dashboard
+2. กด "เข้าสู่ระบบ"
+3. เลือก Google Account
+4. อนุญาต YouTube access
+```
 
-## 📖 วิธีใช้งาน
+### 3. อัปโหลดวิดีโอ
+```
+1. ไปหน้า "📤 อัปโหลด"
+2. เลือกไฟล์
+3. กรอก title/description
+4. กดอัปโหลด
+```
 
-1. **เข้าสู่ระบบ** - คลิก "เข้าสู่ระบบ" เพื่อเชื่อมต่อบัญชี YouTube
-2. **ตั้งค่า** - ไปที่แท็บ "ตั้งค่า":
-   - ระบุ path โฟลเดอร์วิดีโอ (เช่น `/Users/you/Videos/youtube`)
-   - เลือกระดับความเป็นส่วนตัว (Public/Unlisted/Private)
-   - เปิด/ปิด ลบไฟล์หลังอัปโหลด
-   - กำหนดคำอธิบายและแท็กเริ่มต้น
-3. **อัปโหลด** - ไปที่แท็บ "ไฟล์วิดีโอ":
-   - คลิก "อัปโหลด" เพื่ออัปโหลดทีละไฟล์
-   - คลิก "อัปโหลดทั้งหมด" เพื่ออัปโหลดทุกไฟล์ที่ยังไม่ได้อัปโหลด
-4. **ดูประวัติ** - แท็บ "ประวัติ" แสดงไฟล์ที่อัปโหลดแล้วพร้อมลิงก์
+### 4. ดาวน์โหลด TikTok
+```
+1. ไปหน้า "🎵 TikTok"
+2. ใส่ keyword (เช่น "แมว")
+3. เลือกคลิปที่ต้องการ
+4. กด "Download & Upload"
+```
 
-## 📁 รูปแบบไฟล์ที่รองรับ
+---
 
-`.mp4`, `.avi`, `.mov`, `.mkv`, `.wmv`, `.flv`, `.webm`, `.m4v`, `.mpeg`, `.mpg`
+## 👥 Multi-Account Setup
 
-## ⚠️ ข้อควรระวัง
+### เพิ่ม YouTube Account
+```
+1. ไปหน้า "👥 Accounts"
+2. กด "➕ เพิ่ม Account"
+3. กรอก:
+   - ชื่อ Account
+   - Client ID (จาก Google Cloud Console)
+   - Client Secret
+4. กด "บันทึก"
+5. กด "🔐 Login YouTube"
+6. กด "✅ ใช้ Account นี้" (เป็น active account)
+```
 
-- YouTube มี quota จำกัดต่อวัน (ปกติ 6 วิดีโอ/วัน สำหรับ API quota เริ่มต้น)
-- ไฟล์ขนาดใหญ่จะใช้เวลาอัปโหลดนาน
-- ตรวจสอบว่าเนื้อหาไม่ละเมิดนโยบาย YouTube ก่อนอัปโหลด
+### ประโยชน์
+```
+- หลาย YouTube channels → จัดการในที่เดียว
+- แต่ละ account มี quota 10,000 units แยกกัน
+- 2 accounts = 12 videos/day
+- 10 accounts = 60 videos/day
+```
+
+---
+
+## 📊 Technology Stack
+
+- **Backend:** Node.js + Express
+- **Frontend:** Vanilla JS (SPA)
+- **Database:** JSON files
+- **APIs:** YouTube Data API v3, TikTok scraping
+- **Real-time:** WebSocket
+- **Architecture:** Event-driven (EventBus pattern)
+
+---
+
+## 📂 Project Structure
+
+```
+autoupload/
+├── server.js                 # Entry point
+├── src/
+│   ├── services/            # Business logic
+│   │   ├── youtube.js       # YouTube API (multi-account)
+│   │   ├── tiktok.js        # TikTok downloader
+│   │   ├── queue.js         # Upload queue
+│   │   ├── scheduler.js     # Auto scheduler
+│   │   ├── eventbus.js      # Event bus + rules
+│   │   └── orchestrator.js  # Service orchestration
+│   ├── routes/              # API routes
+│   │   ├── upload.js        # Upload endpoints
+│   │   ├── tiktok.js        # TikTok endpoints
+│   │   ├── accounts.js      # Account management
+│   │   └── ...
+│   └── utils/
+│       ├── accounts.js      # Account manager
+│       ├── logger.js        # Logging
+│       └── store.js         # JSON data store
+├── public/
+│   ├── index.html           # SPA shell
+│   ├── app.js               # Frontend router
+│   └── pages/               # Page modules
+│       ├── dashboard.js
+│       ├── upload.js
+│       ├── tiktok.js
+│       ├── accounts.js
+│       └── ...
+└── data/
+    ├── accounts.json        # Multi-account data
+    ├── uploads.json         # Upload history
+    ├── settings.json        # User settings
+    └── ...
+```
+
+---
+
+## 🎯 Monetization Strategy
+
+### เป้าหมาย: ผ่าน YouTube Partner Program (YPP)
+```
+✅ 1,000 subscribers
+✅ 4,000 watch hours (12 months)
+```
+
+### กลยุทธ์
+1. **เลือกคลิปดี** → Virality score 75+ (🔥)
+2. **SEO Optimization** → เพิ่มโอกาสโผล่ search/recommended
+3. **Prime-time Upload** → 19:00-21:00 (คนดูมาก)
+4. **Avoid Demonetization** → บล็อกคลิปเสี่ยง (⚠️/🚫)
+5. **Multi-Account** → กระจาย quota หลาย channels
+
+---
+
+## ⚠️ YouTube API Quota
+
+### Default (Free Tier)
+```
+10,000 units/day per account
+= 6 uploads/day (1,600 units/upload)
+Reset: Midnight PST daily
+```
+
+### Extended Quota (ขอได้ฟรี)
+```
+1M+ units/day
+= 600+ uploads/day
+ขอที่: Google Cloud Console → YouTube Data API v3 → Quotas
+```
+
+---
+
+## 📚 Documentation
+
+- **FEATURES.md** - รายละเอียดฟีเจอร์ทั้งหมด
+- **MULTI_ACCOUNT_GUIDE.md** - คู่มือ Multi-Account ฉบับเต็ม
+- **QUICK_START_ACCOUNTS.md** - เริ่มต้นใช้ Multi-Account
+- **QUOTA_FIX.md** - แก้ไขปัญหา Quota
+- **TIKTOK_FEATURES.md** - ฟีเจอร์ TikTok ละเอียด
+
+---
+
+## 🛠️ Configuration
+
+### Google Cloud Console
+```
+1. สร้าง Project
+2. เปิด YouTube Data API v3
+3. สร้าง OAuth 2.0 Client ID
+4. ดาวน์โหลด client_secret.json
+5. วางไฟล์ในโฟลเดอร์โปรเจค
+```
+
+### Multi-Account (แนะนำ)
+```
+1. ไปหน้า "👥 Accounts"
+2. เพิ่ม account ด้วย Client ID & Secret
+3. Login per account
+4. สลับ active account เมื่อต้องการอัป
+```
+
+---
+
+## 🔧 Troubleshooting
+
+### Quota หมด?
+```
+✅ สลับไปใช้ account อื่น
+✅ รอ reset เที่ยงคืน PST
+✅ ขอ Extended Quota (1M+ units/day)
+```
+
+### อัปโหลดล้มเหลว?
+```
+✅ ดูที่ "📋 Activity" → เช็ค error log
+✅ ดูที่ "🔄 คิว" → ลองใหม่
+✅ เช็ค quota remaining
+```
+
+### TikTok ดาวน์โหลดไม่ได้?
+```
+✅ เช็คว่า URL ถูกต้อง
+✅ ลอง provider อื่น (ระบบมี 3 providers)
+✅ ดู error log ใน Activity
+```
+
+---
+
+## 📝 License
+
+MIT License
+
+---
+
+## 🎉 Credits
+
+Built with ❤️ for YouTube content creators
+
+**Version:** 2.1.0
+**Last Updated:** July 8, 2026
+
+---
+
+✅ **Ready to use!** เปิด http://localhost:3000 เริ่มอัปโหลดได้เลย! 🚀

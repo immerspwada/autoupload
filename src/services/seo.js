@@ -103,6 +103,45 @@ const MONETIZATION_RISK_KEYWORDS = {
 // Common filler words to clean from titles
 const FILLER_WORDS = ['fyp', 'foryou', 'foryoupage', 'viral', 'trending', 'xyzbca', 'tiktok', '#'];
 
+const VALUE_INTENTS = [
+  {
+    id: 'high_rpm',
+    label: 'รายได้โฆษณาสูง',
+    keywords: ['finance', 'ลงทุน', 'ประหยัดเงิน', 'ธุรกิจ', 'business', 'ai', 'tech', 'software', 'iphone', 'gadget', 'review', 'อสังหา', 'real estate', 'ประกัน', 'credit', 'บัตรเครดิต'],
+    revenue: 30,
+    follower: 8,
+    seo: 18,
+    angle: 'ทำเป็นคลิปให้ความรู้/รีวิวที่ตอบคำถามชัดเจน จะมีโอกาส RPM สูงกว่า entertainment ทั่วไป'
+  },
+  {
+    id: 'howto',
+    label: 'ค้นหาเจอระยะยาว',
+    keywords: ['how to', 'howto', 'วิธี', 'สอน', 'tutorial', 'tips', 'เทคนิค', 'สูตร', 'recipe', 'ทำอาหาร', 'แก้ปัญหา', 'diy', 'learn', 'เรียน'],
+    revenue: 18,
+    follower: 16,
+    seo: 30,
+    angle: 'ตั้ง title แบบตอบปัญหา เช่น วิธี..., เทคนิค..., สูตร... เพื่อเก็บ search traffic ระยะยาว'
+  },
+  {
+    id: 'trust_builder',
+    label: 'สร้างผู้ติดตาม',
+    keywords: ['routine', 'daily', 'vlog', 'review', 'before after', 'รีวิว', 'ลองใช้', 'เปรียบเทียบ', 'challenge', 'fitness', 'workout', 'skincare', 'makeup'],
+    revenue: 12,
+    follower: 28,
+    seo: 12,
+    angle: 'ใช้ CTA ให้ติดตามเพื่อดูตอนต่อไป/ผลลัพธ์จริง จะช่วยเปลี่ยน viewer เป็น subscriber'
+  },
+  {
+    id: 'broad_viral',
+    label: 'ไวรัลกว้าง',
+    keywords: ['funny', 'ตลก', 'แมว', 'หมา', 'pet', 'animal', 'cute', 'น่ารัก', 'comedy', 'meme', 'travel', 'เที่ยว', 'street food'],
+    revenue: 8,
+    follower: 18,
+    seo: 8,
+    angle: 'เหมาะกับเพิ่ม reach และผู้ติดตาม แต่ควรเพิ่มบริบท/keyword เพื่อไม่ให้เป็น reused-content บางเกินไป'
+  }
+];
+
 class SEOService {
   constructor() {
     this.seoSettings = null;
@@ -122,6 +161,7 @@ class SEOService {
     const publishAt = options.schedulePublish ? this.getOptimalPublishTime() : null;
     const validation = this.validateForMonetization(tiktokData, title);
     const virality = this.calculateViralityScore(tiktokData);
+    const quality = this.scoreMetadata({ title, description, tags, categoryId, validation, virality, tiktokData });
 
     return {
       title,
@@ -131,7 +171,82 @@ class SEOService {
       publishAt,
       validation,
       virality,
+      quality,
       privacy: publishAt ? 'private' : (config.privacy || 'public') // Private if scheduled
+    };
+  }
+
+  /**
+   * Score metadata quality so the UI can explain "why this is good/bad".
+   * This is intentionally deterministic and transparent: every point maps to
+   * a concrete YouTube packaging improvement the user can act on.
+   */
+  scoreMetadata({ title, description, tags, categoryId, validation, virality, tiktokData }) {
+    const checks = [];
+    let score = 100;
+
+    const titleLength = title.length;
+    if (titleLength < 25) {
+      score -= 12;
+      checks.push({ level: 'warning', code: 'TITLE_SHORT', message: 'Title ยังสั้นไป เพิ่ม keyword หรือบริบทอีกเล็กน้อย' });
+    } else if (titleLength > 85) {
+      score -= 8;
+      checks.push({ level: 'info', code: 'TITLE_LONG', message: 'Title ยาวใกล้ชน limit อาจถูกตัดบนมือถือ' });
+    } else {
+      checks.push({ level: 'success', code: 'TITLE_OK', message: 'Title ยาวกำลังดีสำหรับ YouTube SEO' });
+    }
+
+    if (!description || description.length < 180) {
+      score -= 10;
+      checks.push({ level: 'warning', code: 'DESC_SHORT', message: 'Description ยังบางไป ควรมี keyword, CTA และบริบทเพิ่มเติม' });
+    } else {
+      checks.push({ level: 'success', code: 'DESC_OK', message: 'Description มีเนื้อหาพอให้ YouTube index' });
+    }
+
+    if (!Array.isArray(tags) || tags.length < 8) {
+      score -= 10;
+      checks.push({ level: 'warning', code: 'TAGS_FEW', message: 'Tags น้อยไป ควรมีอย่างน้อย 8-15 tags ที่เกี่ยวข้อง' });
+    } else if (tags.length > 25) {
+      score -= 3;
+      checks.push({ level: 'info', code: 'TAGS_MANY', message: 'Tags เยอะมาก ตรวจว่าไม่กว้างเกินไป' });
+    } else {
+      checks.push({ level: 'success', code: 'TAGS_OK', message: 'จำนวน tags เหมาะสม' });
+    }
+
+    if (categoryId === 22 && this.detectCategory(tiktokData) === 22) {
+      score -= 4;
+      checks.push({ level: 'info', code: 'GENERIC_CATEGORY', message: 'Category เป็น People & Blogs เพราะจับหมวดเฉพาะไม่ได้' });
+    } else {
+      checks.push({ level: 'success', code: 'CATEGORY_OK', message: 'Category สอดคล้องกับ keyword ที่พบ' });
+    }
+
+    if (validation.status === 'blocked') {
+      score = Math.min(score, 20);
+      checks.push({ level: 'error', code: 'MONETIZATION_BLOCKED', message: 'มีความเสี่ยงนโยบายสูง ไม่ควรอัปโหลด' });
+    } else if (validation.status === 'warning') {
+      score -= 18;
+      checks.push({ level: 'warning', code: 'MONETIZATION_WARNING', message: 'มีคำ/ลักษณะเสี่ยง ควรตรวจด้วยคนก่อนอัปโหลด' });
+    }
+
+    if ((virality?.score || 0) >= 75) {
+      score += 5;
+      checks.push({ level: 'success', code: 'VIRAL_SIGNAL', message: 'สัญญาณ virality สูง คุ้มกับ quota' });
+    } else if ((virality?.score || 0) < 35) {
+      score -= 8;
+      checks.push({ level: 'info', code: 'LOW_VIRALITY', message: 'สัญญาณ virality ต่ำ ควรใช้ quota อย่างระวัง' });
+    }
+
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    const grade = score >= 85 ? 'excellent'
+      : score >= 70 ? 'good'
+      : score >= 50 ? 'needs_work'
+      : 'risky';
+
+    return {
+      score,
+      grade,
+      checks,
+      recommendation: this._qualityRecommendation(score, validation, virality)
     };
   }
 
@@ -200,6 +315,115 @@ class SEOService {
         shareRate: +(shareRate * 100).toFixed(3),
         ageDays: createTime ? Math.round((Date.now() / 1000 - createTime) / 86400) : null
       }
+    };
+  }
+
+  /**
+   * Score business opportunity before uploading:
+   * - revenue: chance to create ad/affiliate value
+   * - follower: chance to convert viewers into subscribers
+   * - seo: chance to rank/search beyond a one-off viral spike
+   */
+  analyzeOpportunity(tiktokData, options = {}) {
+    const text = [
+      tiktokData.desc,
+      tiktokData.title,
+      ...(Array.isArray(tiktokData.matchedKeywords) ? tiktokData.matchedKeywords : [])
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    const virality = tiktokData.virality || this.calculateViralityScore(tiktokData);
+    const validation = tiktokData.validation || this.validateForMonetization(tiktokData, tiktokData.desc || tiktokData.title || '');
+    const categoryId = this.detectCategory(tiktokData);
+    const matchedIntents = VALUE_INTENTS
+      .map(intent => {
+        const hits = intent.keywords.filter(k => text.includes(k.toLowerCase()));
+        return hits.length ? { ...intent, hits } : null;
+      })
+      .filter(Boolean);
+
+    const views = tiktokData.playCount || 0;
+    const engagementRate = ((tiktokData.likeCount || 0) + (tiktokData.commentCount || 0) + (tiktokData.shareCount || 0)) / Math.max(views, 1);
+    const hasUsefulCaption = (tiktokData.desc || '').replace(/#[\w\u0E00-\u0E7Fа-яА-Я]+/g, '').trim().length >= 18;
+    const hasHashtags = this._extractHashtags(tiktokData.desc || '').length >= 2;
+    const duration = tiktokData.duration || 0;
+
+    let revenue = 20;
+    let follower = 20;
+    let seo = 18;
+    const reasons = [];
+    const warnings = [];
+
+    for (const intent of matchedIntents) {
+      revenue += intent.revenue;
+      follower += intent.follower;
+      seo += intent.seo;
+      reasons.push(`${intent.label}: ${intent.hits.slice(0, 3).join(', ')}`);
+    }
+
+    revenue += Math.min((virality.score || 0) * 0.22, 18);
+    follower += Math.min((virality.score || 0) * 0.35, 28);
+    seo += hasUsefulCaption ? 12 : -8;
+    seo += hasHashtags ? 6 : 0;
+    follower += engagementRate >= 0.08 ? 12 : engagementRate >= 0.04 ? 7 : 0;
+    revenue += views >= 1000000 ? 10 : views >= 100000 ? 6 : views >= 10000 ? 3 : 0;
+
+    if ([26, 27, 28].includes(categoryId)) {
+      revenue += 10;
+      seo += 8;
+      reasons.push(`หมวด ${this.getCategoryName(categoryId)} เหมาะกับ search และรายได้`);
+    } else if ([15, 23, 24].includes(categoryId)) {
+      follower += 8;
+      reasons.push(`หมวด ${this.getCategoryName(categoryId)} เหมาะกับ reach และผู้ติดตาม`);
+    }
+
+    if (duration > 0 && duration < 20) {
+      revenue -= 8;
+      seo -= 5;
+      warnings.push('สั้นมาก ควรทำ title/description ให้ชัดเพื่อชดเชยบริบทที่น้อย');
+    } else if (duration >= 45) {
+      revenue += 5;
+      seo += 4;
+    }
+
+    if (options.alreadyUploaded || tiktokData.alreadyUploaded) {
+      revenue -= 30;
+      follower -= 20;
+      seo -= 20;
+      warnings.push('เคยอัปแล้ว ไม่ควรใช้ quota ซ้ำ');
+    }
+
+    if (validation.status === 'blocked') {
+      revenue = Math.min(revenue, 8);
+      follower = Math.min(follower, 12);
+      seo = Math.min(seo, 8);
+      warnings.push('มีความเสี่ยงนโยบายสูง ไม่เหมาะกับ monetization');
+    } else if (validation.status === 'warning') {
+      revenue -= 18;
+      seo -= 8;
+      warnings.push('มีคำเสี่ยง demonetize ควรปรับ metadata หรือข้าม');
+    }
+
+    revenue = this._clampScore(revenue);
+    follower = this._clampScore(follower);
+    seo = this._clampScore(seo);
+    const score = Math.round((revenue * 0.36) + (follower * 0.32) + (seo * 0.32));
+    const tier = score >= 82 ? 'premium'
+      : score >= 68 ? 'growth'
+      : score >= 52 ? 'test'
+      : 'skip';
+
+    const primaryIntent = matchedIntents[0] || null;
+    return {
+      score,
+      tier,
+      revenue,
+      follower,
+      seo,
+      intent: primaryIntent ? primaryIntent.label : 'ทั่วไป',
+      angle: primaryIntent ? primaryIntent.angle : this._defaultOpportunityAngle(categoryId, virality),
+      reasons: reasons.slice(0, 4),
+      warnings: warnings.slice(0, 3),
+      recommendedAction: this._opportunityRecommendation(score, validation)
     };
   }
 
@@ -598,6 +822,34 @@ class SEOService {
     const keywords = CATEGORY_KEYWORDS[categoryId] || [];
     // Return a subset of category keywords as tags
     return keywords.slice(0, 5);
+  }
+
+  _qualityRecommendation(score, validation, virality) {
+    if (validation.status === 'blocked') return 'ไม่ควรอัปโหลดจนกว่าจะแก้ความเสี่ยงด้านนโยบาย';
+    if (score >= 85) return 'พร้อมอัปโหลด เหมาะกับการใช้ quota';
+    if ((virality?.score || 0) >= 75 && score >= 70) return 'คลิปแรง ควรอัปโหลด แต่ตรวจ metadata อีกครั้งก่อนเผยแพร่';
+    if (score >= 70) return 'ใช้ได้ ควรปรับรายละเอียดเล็กน้อยเพื่อเพิ่ม SEO';
+    if (score >= 50) return 'ควรปรับ title/description/tags ก่อนใช้ quota';
+    return 'ยังไม่คุ้ม quota แนะนำเลือกคลิปอื่นหรือปรับ metadata มากขึ้น';
+  }
+
+  _clampScore(value) {
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  _defaultOpportunityAngle(categoryId, virality) {
+    if ((virality?.score || 0) >= 75) return 'คลิปแรง เหมาะกับการทำ title ที่จับ hook ใน 5 คำแรกและ CTA ให้ติดตาม';
+    if ([26, 27, 28].includes(categoryId)) return 'เพิ่มคำถาม/วิธีทำใน title เพื่อให้ค้นหาเจอระยะยาว';
+    return 'เพิ่มบริบทและ keyword ใน description เพื่อให้ YouTube เข้าใจคลิปมากขึ้น';
+  }
+
+  _opportunityRecommendation(score, validation) {
+    if (validation.status === 'blocked') return 'ข้ามคลิปนี้เพื่อป้องกันเสียช่องหรือรายได้';
+    if (validation.status === 'warning') return 'ตรวจด้วยคนก่อนอัป และปรับคำเสี่ยงใน title/description';
+    if (score >= 82) return 'คลิปมูลค่าสูง ควรอัปในช่วง prime time พร้อม SEO เต็ม';
+    if (score >= 68) return 'เหมาะกับการโตช่อง เลือกได้ถ้า quota ยังพอ';
+    if (score >= 52) return 'ใช้ทดสอบได้ แต่ควรปรับ SEO ก่อนอัป';
+    return 'ยังไม่คุ้ม quota หา candidate ที่เจตนา/engagement ชัดกว่านี้';
   }
 }
 

@@ -2,11 +2,12 @@
 const express = require('express');
 const router = express.Router();
 const quotaManager = require('../services/quota');
+const youtubeService = require('../services/youtube');
 const logger = require('../utils/logger');
 
-// Get current quota status
+// Get current quota status — uses account-based quota (with PST auto-reset)
 router.get('/status', (req, res) => {
-  const status = quotaManager.getStatus();
+  const status = youtubeService.getQuotaStatus();
   res.json(status);
 });
 
@@ -64,6 +65,32 @@ router.post('/reset', (req, res) => {
     success: true,
     message: 'Quota has been reset to 0'
   });
+});
+
+// ★ NEW: Filter videos by quota availability (smart selection)
+router.post('/filter', (req, res) => {
+  try {
+    const { videos } = req.body;
+    if (!Array.isArray(videos)) {
+      return res.status(400).json({ error: 'Videos must be an array' });
+    }
+    const result = quotaManager.filterByQuota(videos);
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to filter by quota', { error: error.message });
+    res.status(500).json({ error: 'Failed to filter by quota' });
+  }
+});
+
+// ★ NEW: Get extended quota guide
+router.get('/extended-guide', (req, res) => {
+  try {
+    const guide = quotaManager.getExtendedQuotaGuide();
+    res.json(guide);
+  } catch (error) {
+    logger.error('Failed to get extended quota guide', { error: error.message });
+    res.status(500).json({ error: 'Failed to get extended quota guide' });
+  }
 });
 
 module.exports = router;

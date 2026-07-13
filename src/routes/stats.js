@@ -5,6 +5,9 @@ const { stats, uploads, settings } = require('../utils/store');
 const logger = require('../utils/logger');
 const uploadQueue = require('../services/queue');
 const scheduler = require('../services/scheduler');
+const quotaManager = require('../services/quota');
+const youtubeService = require('../services/youtube');
+const quotaRotator = require('../services/quotaRotator');
 
 // Dashboard overview
 router.get('/dashboard', (req, res) => {
@@ -13,6 +16,7 @@ router.get('/dashboard', (req, res) => {
   const config = settings.load();
   const queueStatus = uploadQueue.getStatus();
   const schedulerConfig = scheduler.getConfig();
+  const quotaStatus = youtubeService.getQuotaStatus(); // ★ ใช้ youtubeService แทน quotaManager (รองรับ multi-account)
 
   // Calculate recent activity (last 7 days)
   const last7Days = [];
@@ -47,6 +51,7 @@ router.get('/dashboard', (req, res) => {
     uploadsByHour: allStats.uploadsByHour || {},
     queue: queueStatus,
     scheduler: schedulerConfig,
+    quota: quotaStatus,
     recentUploads: allUploads.slice(-5).reverse()
   });
 });
@@ -71,6 +76,30 @@ router.get('/logs', (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
   const logs = logger.getRecentLogs(limit);
   res.json(logs);
+});
+
+// Quota status
+router.get('/quota', (req, res) => {
+  const quotaStatus = youtubeService.getQuotaStatus(); // ★ ใช้ youtubeService แทน quotaManager (รองรับ multi-account)
+  res.json(quotaStatus);
+});
+
+// ★ Multi-Account Rotation Status
+// แสดงสถานะ quota ทุก account + rotation history
+router.get('/quota/rotation', (req, res) => {
+  res.json(quotaRotator.getFullStatus());
+});
+
+// Preview: จะใช้ account ไหนถ้าอัป N วิดีโอ
+router.get('/quota/preview', (req, res) => {
+  const count = parseInt(req.query.count) || 1;
+  res.json(quotaRotator.preview(count));
+});
+
+// Force rotate ไป account ที่มี quota เหลือมากที่สุด
+router.post('/quota/rotate', (req, res) => {
+  const result = quotaRotator.rotateIfNeeded(1600);
+  res.json(result);
 });
 
 function formatBytes(bytes) {

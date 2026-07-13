@@ -14,7 +14,8 @@ router.get('/status', (req, res) => {
 // Start OAuth flow
 router.get('/login', (req, res) => {
   try {
-    const url = youtubeService.getAuthUrl();
+    const { accountId } = req.query; // Support account-specific login
+    const url = youtubeService.getAuthUrl(accountId);
     res.json({ url });
   } catch (err) {
     logger.error('Login error', { error: err.message });
@@ -24,7 +25,8 @@ router.get('/login', (req, res) => {
 
 // Logout
 router.post('/logout', (req, res) => {
-  youtubeService.logout();
+  const { accountId } = req.body; // Support account-specific logout
+  youtubeService.logout(accountId);
   orchestrator.onAuthLogout();
   res.json({ success: true });
 });
@@ -32,7 +34,8 @@ router.post('/logout', (req, res) => {
 // Channel info
 router.get('/channel', async (req, res) => {
   try {
-    const info = await youtubeService.getChannelInfo();
+    const { accountId } = req.query; // Support account-specific channel info
+    const info = await youtubeService.getChannelInfo(accountId);
     res.json(info || { error: 'No channel info available' });
   } catch (err) {
     res.status(500).json({ error: err.message });

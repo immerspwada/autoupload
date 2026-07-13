@@ -79,4 +79,47 @@ router.delete('/history', (req, res) => {
   res.json({ success: true });
 });
 
+// List downloads (สำหรับ Browser Upload)
+router.get('/list-downloads', (req, res) => {
+  const { folder = 'tiktok' } = req.query;
+  const downloadsPath = path.join(process.cwd(), 'downloads', folder);
+
+  if (!fs.existsSync(downloadsPath)) {
+    return res.json({ 
+      success: true, 
+      files: [], 
+      message: `Folder not found: downloads/${folder}` 
+    });
+  }
+
+  try {
+    const files = fs.readdirSync(downloadsPath)
+      .filter(f => VIDEO_EXTENSIONS.includes(path.extname(f).toLowerCase()))
+      .map(f => {
+        const filepath = path.join(downloadsPath, f);
+        const stats = fs.statSync(filepath);
+        return {
+          name: f,
+          fullPath: filepath,
+          size: stats.size,
+          sizeFormatted: formatFileSize(stats.size),
+          modified: stats.mtime,
+        };
+      })
+      .sort((a, b) => new Date(b.modified) - new Date(a.modified));
+
+    res.json({ 
+      success: true, 
+      files,
+      folder: downloadsPath,
+      total: files.length
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 module.exports = router;

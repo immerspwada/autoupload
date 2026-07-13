@@ -265,6 +265,85 @@ class QuotaManager {
         : `✓ สามารถอัปโหลดได้ครบ ${count} วิดีโอ (quota เหลือ ${remaining - totalCost}/${this.data.dailyLimit} หลังอัป)`
     };
   }
+
+  /**
+   * Smart filtering: เลือกวิดีโอที่ควรอัปโหลดตาม quota ที่เหลือ
+   * เมื่อ quota น้อย → อัปแค่คลิป high-virality
+   * @param {Array} videos - Array of video objects with virality scores
+   * @returns {object} { allowed, rejected, reason }
+   */
+  filterByQuota(videos) {
+    this._checkReset();
+    const status = this.getStatus();
+    const uploadsRemaining = status.uploadsRemaining;
+
+    // ถ้า quota เหลือเยอะ (>50%) → อนุญาตทั้งหมด
+    if (status.percentUsed < 50) {
+      return {
+        allowed: videos,
+        rejected: [],
+        reason: `Quota เพียงพอ (${uploadsRemaining} slots remaining)`
+      };
+    }
+
+    // ถ้า quota น้อย → เลือกแค่คลิปดีที่สุด
+    const sorted = [...videos].sort((a, b) => {
+      const scoreA = a.virality?.score || 0;
+      const scoreB = b.virality?.score || 0;
+      return scoreB - scoreA; // descending
+    });
+
+    // กำหนดเกณฑ์ตาม quota ที่เหลือ
+    let minScore = 0;
+    if (status.percentUsed >= 95) {
+      minScore = 75; // Critical: only viral (🔥)
+    } else if (status.percentUsed >= 80) {
+      minScore = 55; // Warning: only hot+ (📈)
+    } else if (status.percentUsed >= 50) {
+      minScore = 35; // Caution: skip low-tier (📉)
+    }
+
+    const allowed = sorted
+      .filter(v => (v.virality?.score || 0) >= minScore)
+      .slice(0, uploadsRemaining);
+
+    const rejected = sorted.filter(v => !allowed.includes(v));
+
+    let reason = '';
+    if (status.percentUsed >= 95) {
+      reason = `🚨 Quota วิกฤต (${status.percentUsed}%) - อัปเฉพาะคลิป viral (score ≥75) เท่านั้น`;
+    } else if (status.percentUsed >= 80) {
+      reason = `⚠️ Quota ใกล้หมด (${status.percentUsed}%) - อัปเฉพาะคลิปดี (score ≥55)`;
+    } else if (status.percentUsed >= 50) {
+      reason = `💡 Quota เหลือน้อย (${status.percentUsed}%) - ข้ามคลิป low-virality (score <35)`;
+    }
+
+    return { allowed, rejected, reason, minScore };
+  }
+
+  /**
+   * คำแนะนำสำหรับขอ Extended Quota
+   */
+  getExtendedQuotaGuide() {
+    return {
+      currentLimit: this.data.dailyLimit,
+      isExtended: this.data.extendedQuota,
+      guide: {
+        step1: 'ไปที่ https://console.cloud.google.com',
+        step2: 'เลือก Project ที่ใช้ YouTube Data API v3',
+        step3: 'ไปที่ APIs & Services → YouTube Data API v3 → Quotas',
+        step4: 'คลิก "Edit Quotas" หรือ "Request Quota Increase"',
+        step5: 'ขอเพิ่มเป็น 1,000,000 units/day (หรือมากกว่า)',
+        step6: 'เหตุผล: "Building automated content curation system for YouTube monetization. Need to upload 50-100 videos/day from curated TikTok content with SEO optimization."',
+        step7: 'รอ Google อนุมัติ (1-3 วัน)',
+        step8: 'หลังอนุมัติ: เรียก /api/quota/set-extended?limit=1000000'
+      },
+      benefits: {
+        current: `${Math.floor(this.data.dailyLimit / UPLOAD_COST)} uploads/day`,
+        after: '600+ uploads/day (with 1M quota)'
+      }
+    };
+  }
 }
 
 module.exports = new QuotaManager();

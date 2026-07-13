@@ -2,32 +2,36 @@
 export function render() {
   return `
     <form id="settings-form" class="settings-form">
+      <div class="page-header">
+        <h2>Settings</h2>
+        <p class="section-desc">ตั้งค่าพื้นฐานสำหรับโฟลเดอร์ อัปโหลด และ metadata เริ่มต้น</p>
+      </div>
       <div class="form-group">
-        <label for="folder">📁 โฟลเดอร์วิดีโอ (path เต็ม)</label>
+        <label for="folder">โฟลเดอร์วิดีโอ (path เต็ม)</label>
         <input type="text" id="folder" name="folder" placeholder="/Users/you/Videos/youtube" required>
         <small>ระบุ path ของโฟลเดอร์ที่เก็บวิดีโอ</small>
       </div>
       <div class="form-group">
-        <label for="privacy">🔒 ระดับความเป็นส่วนตัว</label>
+        <label for="privacy">ระดับความเป็นส่วนตัว</label>
         <select id="privacy" name="privacy">
-          <option value="public">🌐 สาธารณะ (Public)</option>
-          <option value="unlisted">🔗 ไม่แสดงในรายการ (Unlisted)</option>
-          <option value="private">🔒 ส่วนตัว (Private)</option>
+          <option value="public">สาธารณะ (Public)</option>
+          <option value="unlisted">ไม่แสดงในรายการ (Unlisted)</option>
+          <option value="private">ส่วนตัว (Private)</option>
         </select>
       </div>
       <div class="form-group">
-        <label class="checkbox-label"><input type="checkbox" id="deleteAfterUpload"> 🗑️ ลบไฟล์หลังอัปโหลดสำเร็จ</label>
+        <label class="checkbox-label"><input type="checkbox" id="deleteAfterUpload"> ลบไฟล์หลังอัปโหลดสำเร็จ</label>
         <small>ไฟล์วิดีโอจะถูกลบหลังอัปโหลดขึ้น YouTube สำเร็จ</small>
       </div>
       <div class="form-group">
-        <label for="defaultDescription">📝 คำอธิบายเริ่มต้น</label>
+        <label for="defaultDescription">คำอธิบายเริ่มต้น</label>
         <textarea id="defaultDescription" rows="3" placeholder="คำอธิบายวิดีโอ..."></textarea>
       </div>
       <div class="form-group">
-        <label for="defaultTags">🏷️ แท็กเริ่มต้น (คั่นด้วยคอมม่า)</label>
+        <label for="defaultTags">แท็กเริ่มต้น (คั่นด้วยคอมม่า)</label>
         <input type="text" id="defaultTags" placeholder="vlog, thailand, daily">
       </div>
-      <button type="submit" class="btn btn-primary">💾 บันทึกการตั้งค่า</button>
+      <button type="submit" class="btn btn-primary">บันทึกการตั้งค่า</button>
     </form>`;
 }
 

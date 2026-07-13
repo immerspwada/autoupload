@@ -122,6 +122,39 @@ Route (/all, scheduler._queueFile)
 - Reset: Midnight PST (UTC-8) ทุกวัน
 - เกิน quota → ต้อรอ 24 ชม. ถึงจะอัปได้ใหม่
 
+## 🚨 YouTube API Quota Management (ปัญหาหลักที่ต้องจัดการ)
+
+**YouTube API Quota Limit:**
+- Free tier: 10,000 units/day
+- Video upload: 1,600 units each
+- **Maximum uploads/day: 6 videos** (10,000 / 1,600 = 6.25)
+- Reset: Midnight PST (UTC-8) ทุกวัน
+- เกิน quota → ต้อรอ 24 ชม. ถึงจะอัปได้ใหม่
+
+**✅ ระบบจัดการ Quota ที่เพิ่มเข้าไป (IMPLEMENTED):**
+
+### 1. Smart Upload Selection (`quota.filterByQuota()`)
+เลือกอัปเฉพาะคลิปดีที่สุดเมื่อ quota น้อย:
+- **quota ≥50%** → อัปทั้งหมด
+- **quota 20-50%** → อัปเฉพาะ virality ≥35 (skip low 📉)
+- **quota 5-20%** → อัปเฉพาะ virality ≥55 (hot+ 📈)
+- **quota <5%** → อัปเฉพาะ virality ≥75 (viral only 🔥)
+
+### 2. Real-time Quota Monitoring
+- **Dashboard Widget** — แสดง uploads remaining พร้อมสีสถานะ (🟢/🟡/🔴)
+- **Warning Banner** — เตือนเมื่อ quota <20%
+- **API `/api/quota/status`** — ดูสถานะ real-time
+
+### 3. Upload Enforcement
+- **Single upload** (`/tiktok/download-and-upload`) — เช็ค quota ก่อนดาวน์โหลด
+- **Batch upload** (`/tiktok/batch-upload`) — Smart filter + หยุดอัพกลางคันถ้า quota หมด
+- **Quota consumption tracking** — นับ 1,600 units หลังอัปสำเร็จ
+
+### 4. Extended Quota Guide
+- **Interactive Modal** — แสดงขั้นตอนขอ quota 1M+ units/day
+- **API `/api/quota/extended-guide`** — คำแนะนำพร้อม template
+- **One-click setup** (`/api/quota/extend`) — เปิดใช้งานหลังได้รับอนุมัติ
+
 **กลยุทธ์จัดการ Quota:**
 1. **เลือกอัปเฉพาะคลิปดีที่สุด** (virality score 75+)
 2. **ใช้ quota อย่างชาญฉลาด**:

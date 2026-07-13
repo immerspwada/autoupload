@@ -38,7 +38,13 @@ class UploadQueue extends EventEmitter {
   }
 
   async _process() {
-    if (this.paused || this.processing) return;
+    if (this.paused || this.processing) {
+      // ถ้า processing อยู่ — schedule อีกรอบหลัง tick เพื่อไม่ให้ items ที่ add ระหว่าง processing หลุด
+      if (this.processing) {
+        setImmediate(() => this._process());
+      }
+      return;
+    }
     this.processing = true;
 
     while (this.active < this.concurrency) {
@@ -49,44 +55,8 @@ class UploadQueue extends EventEmitter {
       next.status = 'processing';
       this.emit('progress', this.getStatus());
 
-      try {
-        const result = await next.task();
-        next.status = 'done';
-        next.result = result;
-        this.emit('completed', { id: next.id, result, filename: next.filename });
-        logger.info('Queue item completed', { id: next.id, filename: next.filename });
-      } catch (err) {
-        next.retries++;
-        if (next.retries < this.maxRetries) {
-          next.status = 'pending';
-          next.error = err.message;
-          logger.warn('Queue item failed, will retry', {
-            id: next.id,
-            filename: next.filename,
-            attempt: next.retries,
-            error: err.message
-          });
-          this.emit('retry', { id: next.id, attempt: next.retries, error: err.message });
-          // Exponential backoff
-          await this._delay(this.retryDelay * Math.pow(2, next.retries - 1));
-        } else {
-          next.status = 'failed';
-          next.error = err.message;
-          this.emit('failed', { id: next.id, error: err.message, filename: next.filename });
-          logger.error('Queue item failed permanently', {
-            id: next.id,
-            filename: next.filename,
-            error: err.message
-          });
-        }
-      }
-
-      this.active--;
-
-      // Delay between uploads
-      if (this.queue.some(q => q.status === 'pending')) {
-        await this._delay(this.delayBetween);
-      }
+      // Run task in background — ไม่ await ใน while loop เพื่อป้องกัน retry delay block
+      this._runTask(next);
     }
 
     this.processing = false;
@@ -97,6 +67,52 @@ class UploadQueue extends EventEmitter {
     if (pending.length === 0 && this.active === 0) {
       this.emit('drain', this.getStatus());
     }
+  }
+
+  async _runTask(item) {
+    try {
+      const result = await item.task();
+      item.status = 'done';
+      item.result = result;
+      this.emit('completed', { id: item.id, result, filename: item.filename });
+      logger.info('Queue item completed', { id: item.id, filename: item.filename });
+    } catch (err) {
+      item.retries++;
+      if (item.retries < this.maxRetries) {
+        item.error = err.message;
+        logger.warn('Queue item failed, will retry', {
+          id: item.id, filename: item.filename,
+          attempt: item.retries, error: err.message
+        });
+        this.emit('retry', { id: item.id, attempt: item.retries, error: err.message });
+
+        // Retry with exponential backoff — delay OUTSIDE the main loop
+        const delay = this.retryDelay * Math.pow(2, item.retries - 1);
+        setTimeout(() => {
+          item.status = 'pending'; // re-queue
+          this.active--;
+          this._process(); // re-trigger processing
+        }, delay);
+        return; // don't fall through to active--
+      } else {
+        item.status = 'failed';
+        item.error = err.message;
+        this.emit('failed', { id: item.id, error: err.message, filename: item.filename });
+        logger.error('Queue item failed permanently', {
+          id: item.id, filename: item.filename, error: err.message
+        });
+      }
+    }
+
+    this.active--;
+
+    // Delay between uploads, then trigger next item
+    if (this.queue.some(q => q.status === 'pending')) {
+      await this._delay(this.delayBetween);
+    }
+
+    // Trigger next item in queue
+    this._process();
   }
 
   _delay(ms) {

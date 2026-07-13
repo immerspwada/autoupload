@@ -4,26 +4,26 @@
 export function render() {
   return `
     <div class="settings-form">
-      <h3>💎 SEO Auto-Optimization</h3>
+      <h3>SEO Auto-Optimization</h3>
       <p class="section-desc">ตั้งค่าการสร้าง title, description, tags, category อัตโนมัติ เพื่อเพิ่มยอดดูและรายได้จากโฆษณา YouTube</p>
 
       <div class="form-group">
-        <label for="seo-mode">⚙️ โหมด SEO</label>
+        <label for="seo-mode">โหมด SEO</label>
         <select id="seo-mode">
-          <option value="auto">🤖 อัตโนมัติ (สร้าง SEO metadata ให้ทุกครั้ง)</option>
-          <option value="manual">✍️ Manual (ใช้ค่าที่ผู้ใช้กรอกเอง)</option>
+          <option value="auto">อัตโนมัติ (สร้าง SEO metadata ให้ทุกครั้ง)</option>
+          <option value="manual">Manual (ใช้ค่าที่ผู้ใช้กรอกเอง)</option>
         </select>
         <small>โหมดอัตโนมัติจะวิเคราะห์คำอธิบาย TikTok เพื่อสร้าง title/tags/category ที่เหมาะกับ YouTube SEO</small>
       </div>
 
       <div class="form-group">
-        <label for="seo-title-template">📌 Title Template (ไม่บังคับ)</label>
+        <label for="seo-title-template">Title Template (ไม่บังคับ)</label>
         <input type="text" id="seo-title-template" placeholder="{title} | ช่องของฉัน">
         <small>ใช้ {title}, {author}, {date} แทนค่าที่จะแทรกอัตโนมัติ</small>
       </div>
 
       <div class="form-group">
-        <label for="seo-channel-desc">📝 คำอธิบายท้ายวิดีโอ (Channel Branding)</label>
+        <label for="seo-channel-desc">คำอธิบายท้ายวิดีโอ (Channel Branding)</label>
         <textarea id="seo-channel-desc" rows="3" placeholder="ติดตามช่องของเราเพื่อดูคลิปสนุกๆทุกวัน..."></textarea>
         <small>จะแนบไว้ท้าย description ของทุกวิดีโอที่อัปโหลด</small>
       </div>
@@ -31,22 +31,22 @@ export function render() {
       <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" id="seo-auto-schedule">
-          ⏰ ตั้งเวลาเผยแพร่อัตโนมัติ (Prime-Time)
+          ตั้งเวลาเผยแพร่อัตโนมัติ (Prime-Time)
         </label>
         <small>ระบบจะเลือกเวลาเผยแพร่ที่คนไทยดู YouTube มากที่สุด (19:00-21:00) แทนการอัปโหลดทันที</small>
       </div>
 
       <div class="form-group">
-        <label for="seo-preferred-hour">🕐 ชั่วโมงที่ต้องการ (ไม่บังคับ, 0-23)</label>
+        <label for="seo-preferred-hour">ชั่วโมงที่ต้องการ (ไม่บังคับ, 0-23)</label>
         <input type="number" id="seo-preferred-hour" min="0" max="23" placeholder="เช่น 19">
         <small>ถ้าไม่ระบุ ระบบจะเลือกช่วง prime-time ที่ดีที่สุดให้อัตโนมัติ</small>
       </div>
 
-      <button id="btn-seo-save" type="button" class="btn btn-primary">💾 บันทึก SEO Settings</button>
+      <button id="btn-seo-save" type="button" class="btn btn-primary">บันทึก SEO Settings</button>
     </div>
 
     <div class="settings-form" style="margin-top:20px;">
-      <h3>🔍 ทดสอบ SEO Preview</h3>
+      <h3>ทดสอบ SEO Preview</h3>
       <p class="section-desc">ลองใส่คำอธิบายวิดีโอ TikTok เพื่อดูตัวอย่าง title/tags/category ที่ระบบจะสร้างให้</p>
 
       <div class="form-group">
@@ -61,7 +61,7 @@ export function render() {
         <label for="seo-preview-duration">ความยาววิดีโอ (วินาที, ไม่บังคับ)</label>
         <input type="number" id="seo-preview-duration" placeholder="เช่น 45">
       </div>
-      <button id="btn-seo-preview" type="button" class="btn btn-secondary">🔍 พรีวิว SEO</button>
+      <button id="btn-seo-preview" type="button" class="btn btn-secondary">พรีวิว SEO</button>
 
       <div id="seo-preview-result" style="display:none; margin-top:16px;"></div>
     </div>`;
@@ -145,12 +145,28 @@ function renderPreview(metadata, categoryName) {
     : metadata.validation.status === 'warning' ? 'pending' : 'error';
 
   const tags = Array.isArray(metadata.tags) ? metadata.tags : [];
+  const quality = metadata.quality || { score: 0, grade: 'needs_work', checks: [], recommendation: '' };
+  const qualityClass = quality.grade === 'excellent' ? 'success'
+    : quality.grade === 'good' ? 'pending'
+    : quality.grade === 'needs_work' ? 'pending'
+    : 'error';
 
   container.innerHTML = `
     <div class="seo-preview-card">
       <div class="seo-preview-header">
         <strong>📊 ผลลัพธ์ SEO</strong>
         <span class="badge badge-${statusClass}">${window.app.escapeHtml(metadata.validation.recommendation)}</span>
+      </div>
+
+      <div class="seo-preview-field">
+        <label>🧠 Smart SEO Score</label>
+        <div class="seo-score-row">
+          <div class="seo-score-circle badge-${qualityClass}">${quality.score}</div>
+          <div>
+            <div class="seo-preview-value">${window.app.escapeHtml(quality.recommendation)}</div>
+            <small>Grade: ${window.app.escapeHtml(quality.grade)}</small>
+          </div>
+        </div>
       </div>
 
       <div class="seo-preview-field">
@@ -182,6 +198,15 @@ function renderPreview(metadata, categoryName) {
             <div class="seo-issue ${issue.level}">
               ${issue.level === 'error' ? '❌' : issue.level === 'warning' ? '⚠️' : 'ℹ️'}
               ${window.app.escapeHtml(issue.message)}
+            </div>`).join('')}
+        </div>` : ''}
+
+      ${quality.checks?.length ? `
+        <div class="seo-preview-issues">
+          ${quality.checks.map(check => `
+            <div class="seo-issue ${check.level}">
+              ${check.level === 'error' ? '❌' : check.level === 'warning' ? '⚠️' : check.level === 'success' ? '✅' : 'ℹ️'}
+              ${window.app.escapeHtml(check.message)}
             </div>`).join('')}
         </div>` : ''}
     </div>`;

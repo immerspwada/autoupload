@@ -5,16 +5,13 @@
 // ═══════════════════════════════════════════════════════════════
 
 const ROUTES = {
-  '/':          () => import('./pages/dashboard.js'),
-  '/dashboard': () => import('./pages/dashboard.js'),
-  '/upload':    () => import('./pages/upload.js'),
-  '/tiktok':    () => import('./pages/tiktok.js'),
-  '/seo':       () => import('./pages/seo.js'),
-  '/files':     () => import('./pages/files.js'),
-  '/queue':     () => import('./pages/queue.js'),
-  '/scheduler': () => import('./pages/scheduler.js'),
-  '/settings':  () => import('./pages/settings.js'),
-  '/history':   () => import('./pages/history.js'),
+  '/':          () => import('./pages/dashboard.js?v=2'),
+  '/dashboard': () => import('./pages/dashboard.js?v=2'),
+  '/tiktok':    () => import('./pages/tiktok.js?v=4'),
+  '/accounts':  () => import('./pages/accounts.js?v=1'),
+  '/seo':       () => import('./pages/seo.js?v=2'),
+  '/activity':  () => import('./pages/activity.js?v=2'),
+  '/settings':  () => import('./pages/settings.js?v=2'),
 };
 
 let ws = null;
@@ -98,13 +95,13 @@ function handleWS({ type, data }) {
       if (currentPage && currentPage.update) currentPage.update(data);
       break;
     case 'queue:completed':
-      showToast(`✅ ${data.filename}`, 'success');
+      showToast(`อัปโหลดเสร็จ: ${data.filename}`, 'success');
       break;
     case 'queue:failed':
-      showToast(`❌ ${data.filename}`, 'error');
+      showToast(`อัปโหลดล้มเหลว: ${data.filename}`, 'error');
       break;
     case 'queue:done':
-      showToast('🎉 คิวเสร็จสิ้น!', 'success');
+      showToast('คิวเสร็จสิ้น', 'success');
       break;
     case 'dashboard:refresh':
       if (currentPage && location.hash === '#/' || location.hash === '#/dashboard') {
@@ -150,34 +147,106 @@ async function loadChannel() {
 function updateConnectionDot(connected) {
   const dot = document.querySelector('#sb-connection .sb-dot');
   const text = document.querySelector('#sb-connection .sb-text');
-  if (dot) { dot.className = `sb-dot ${connected?'connected':'disconnected'}`; }
-  if (text) { text.textContent = connected ? 'เชื่อมต่อ' : 'ขาด'; }
+  if (dot) { 
+    dot.className = `sb-dot ${connected?'connected':'disconnected'}`; 
+  }
+  if (text) { 
+    text.textContent = connected ? 'เชื่อมต่อแล้ว' : 'ขาดการเชื่อมต่อ'; 
+  }
 }
 
 function updateStatusBar(data) {
   if (!data) return;
+  
+  // Queue status
   const qEl = document.querySelector('#sb-queue .sb-text');
+  const qContainer = document.getElementById('sb-queue');
   if (qEl && data.queue) {
     const p = data.queue.pending||0, pr = data.queue.processing||0;
-    qEl.textContent = pr > 0 ? `อัปโหลด: ${pr} | รอ: ${p}` : p > 0 ? `คิว: ${p}` : 'คิวว่าง';
+    if (pr > 0) {
+      qEl.textContent = `กำลังอัป ${pr} | รอ ${p}`;
+      qContainer.classList.add('queue-active');
+    } else if (p > 0) {
+      qEl.textContent = `รอ ${p} คลิป`;
+      qContainer.classList.remove('queue-active');
+    } else {
+      qEl.textContent = 'คิวว่าง';
+      qContainer.classList.remove('queue-active');
+    }
   }
+  
+  // Uptime
   const uEl = document.querySelector('#sb-uptime .sb-text');
   if (uEl && data.uptime) uEl.textContent = data.uptime;
+  
+  // Health status
   const hEl = document.getElementById('sb-health');
   if (hEl && data.overall) {
-    const icon = hEl.querySelector('.sb-icon'), text = hEl.querySelector('.sb-text');
-    const map = { healthy:['💚','ปกติ'], warning:['💛','เตือน'], critical:['🔴','วิกฤต'], error:['❌','ผิดพลาด'] };
-    const [i,t] = map[data.overall] || ['❓','?'];
-    icon.textContent = i; text.textContent = t;
+    const icon = hEl.querySelector('.sb-icon');
+    const text = hEl.querySelector('.sb-text');
+    const map = { 
+      healthy: ['H','ปกติ','health-ok'], 
+      warning: ['!','เตือน','health-warning'], 
+      critical: ['!','วิกฤต','health-critical'], 
+      error: ['!','ผิดพลาด','health-critical'] 
+    };
+    const [i, t, cls] = map[data.overall] || ['?','?',''];
+    if (icon) icon.textContent = i;
+    if (text) text.textContent = t;
+    hEl.className = 'status-bar-item';
+    if (cls) hEl.classList.add(cls);
   }
 }
 
 async function loadHealthStatus() {
-  try { const r = await fetch('/api/health'); updateStatusBar(await r.json()); } catch(e) {}
+  try { 
+    const r = await fetch('/api/health'); 
+    updateStatusBar(await r.json()); 
+    // Load quota status
+    const qr = await fetch('/api/stats/quota');
+    updateQuotaStatus(await qr.json());
+  } catch(e) {}
+}
+
+function updateQuotaStatus(quota) {
+  const el = document.getElementById('sb-quota-text');
+  const container = document.getElementById('sb-quota');
+  if (!el || !container) return;
+  
+  // รองรับ multi-account: ใช้ total uploads left ถ้ามีหลาย account
+  const remaining = quota.uploadsRemaining ?? quota.remaining ?? 0;
+  const used = quota.used || 0;
+  const limit = quota.limit || 10000;
+  const percent = quota.percentUsed || ((used / limit) * 100);
+  const isMulti = quota.multiAccount && quota.accounts?.length > 1;
+  const accountCount = quota.accounts?.filter(a => a.isAuthenticated)?.length || 1;
+
+  if (isMulti) {
+    el.textContent = `${remaining} คลิป (${accountCount} accs)`;
+  } else {
+    el.textContent = `${remaining} คลิป`;
+  }
+  
+  // เปลี่ยนสีตามสถานะ
+  container.className = 'status-bar-item';
+  if (percent >= 90) {
+    container.classList.add('quota-critical');
+    container.title = isMulti
+      ? `Quota เกือบหมดทุก account: ${used}/${limit} (${percent.toFixed(0)}%)`
+      : `Quota เกือบหมด: ${used}/${limit} (${percent.toFixed(0)}%)`;
+  } else if (percent >= 70) {
+    container.classList.add('quota-warning');
+    container.title = `Quota: ${used}/${limit} (${percent.toFixed(0)}%)`;
+  } else {
+    container.classList.add('quota-ok');
+    container.title = isMulti
+      ? `Quota รวม ${accountCount} accounts: ${used}/${limit} (${percent.toFixed(0)}%) — ${remaining} uploads left`
+      : `Quota: ${used}/${limit} (${percent.toFixed(0)}%)`;
+  }
 }
 
 async function runCleanup() {
-  try { const r = await fetch('/api/health/cleanup',{method:'POST'}); const d=await r.json(); showToast(`🧹 ลบ ${d.tempFiles.cleaned} ไฟล์ temp`, 'success'); } catch(e) { showToast('ล้มเหลว','error'); }
+  try { const r = await fetch('/api/health/cleanup',{method:'POST'}); const d=await r.json(); showToast(`ลบ ${d.tempFiles.cleaned} ไฟล์ temp`, 'success'); } catch(e) { showToast('ล้มเหลว','error'); }
 }
 
 // ==================== UPLOAD MODAL ====================
@@ -203,8 +272,8 @@ document.getElementById('upload-form').addEventListener('submit', async (e) => {
 // ==================== KEYBOARD SHORTCUTS ====================
 document.addEventListener('keydown', (e) => {
   if (['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
-  const paths = ['/','/upload','/tiktok','/seo','/files','/queue','/scheduler','/settings','/history'];
-  if (e.key >= '1' && e.key <= '9') { e.preventDefault(); navigate(paths[parseInt(e.key)-1]); return; }
+  const paths = ['/','/tiktok','/accounts','/seo','/activity','/settings'];
+  if (e.key >= '1' && e.key <= String(paths.length)) { e.preventDefault(); navigate(paths[parseInt(e.key)-1]); return; }
   switch (e.key.toLowerCase()) {
     case 'r': e.preventDefault(); if (window.filesPage) window.filesPage.reload(); showToast('🔄','info'); break;
     case '?': e.preventDefault(); const m=document.getElementById('shortcuts-modal'); m.style.display=m.style.display==='none'?'flex':'none'; break;

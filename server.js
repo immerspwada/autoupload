@@ -22,6 +22,7 @@ const statsRoutes = require('./src/routes/stats');
 const tiktokRoutes = require('./src/routes/tiktok');
 const healthRoutes = require('./src/routes/health');
 const seoRoutes = require('./src/routes/seo');
+const activityRoutes = require('./src/routes/activity');
 
 const app = express();
 const server = http.createServer(app);
@@ -58,7 +59,12 @@ function broadcast(type, data) {
   const message = JSON.stringify({ type, data });
   wsClients.forEach(ws => {
     if (ws.readyState === 1) { // OPEN
-      ws.send(message);
+      try {
+        ws.send(message);
+      } catch (err) {
+        // Client disconnected mid-send — remove silently
+        wsClients.delete(ws);
+      }
     }
   });
 }
@@ -83,6 +89,8 @@ app.use('/api/tiktok', tiktokRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/seo', seoRoutes);
 app.use('/api/quota', require('./src/routes/quota'));
+app.use('/api/activity', activityRoutes);
+app.use('/api/accounts', require('./src/routes/accounts'));
 
 // Event Bus API
 app.get('/api/events/history', (req, res) => {
@@ -109,6 +117,9 @@ app.post('/api/settings', (req, res) => {
   res.json({ success: true });
 });
 
+// Legacy routes — removed upload/files/history/queue/scheduler pages
+// These routes are kept for backward compatibility but return 404 if removed pages are accessed
+
 app.get('/api/history', (req, res) => {
   const { uploads } = require('./src/utils/store');
   res.json(uploads.load().reverse());
@@ -118,22 +129,6 @@ app.delete('/api/history', (req, res) => {
   const { uploads } = require('./src/utils/store');
   uploads.save([]);
   res.json({ success: true });
-});
-
-// Legacy upload route
-app.post('/api/upload', async (req, res) => {
-  req.url = '/single';
-  uploadRoutes.handle(req, res);
-});
-
-app.post('/api/upload-all', (req, res) => {
-  req.url = '/all';
-  uploadRoutes.handle(req, res);
-});
-
-app.post('/api/drop-and-upload-youtube', (req, res, next) => {
-  req.url = '/drop';
-  uploadRoutes.handle(req, res, next);
 });
 
 // SSE upload progress (legacy compatibility)
@@ -165,10 +160,24 @@ app.get('/api/upload-progress', (req, res) => {
 
 // OAuth callback
 app.get('/oauth2callback', async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
   try {
-    await youtubeService.handleCallback(code);
+    await youtubeService.handleCallback(code, state);
     orchestrator.onAuthLogin();
+    
+    // Check if multi-account login
+    if (state) {
+      try {
+        const stateData = JSON.parse(state);
+        if (stateData.accountId) {
+          res.redirect('/?auth=success&account=true');
+          return;
+        }
+      } catch (e) {
+        // Ignore
+      }
+    }
+    
     res.redirect('/?auth=success');
   } catch (error) {
     logger.error('OAuth callback error', { error: error.message });
@@ -202,8 +211,12 @@ server.listen(PORT, () => {
 
   // Auto-cleanup every 6 hours
   setInterval(() => {
-    healthService.cleanupQueue();
-    healthService.cleanupTempFiles();
+    try {
+      healthService.cleanupQueue();
+      healthService.cleanupTempFiles();
+    } catch (err) {
+      logger.error('Health cleanup error', { error: err.message });
+    }
   }, 6 * 60 * 60 * 1000);
 
   // Broadcast system status every 30 seconds

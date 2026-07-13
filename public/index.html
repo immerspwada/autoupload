@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>YouTube Auto Uploader v2</title>
+  <title>Auto Uploader</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='42' fill='%23111827'/><path d='M32 54h36M50 32v36' stroke='white' stroke-width='8' stroke-linecap='round'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -13,46 +14,68 @@
   <div class="container">
     <header>
       <div class="header-top">
-        <h1>🎬 YouTube Auto Uploader</h1>
+        <h1>Auto Uploader</h1>
         <span class="version">v2.1</span>
       </div>
-      <p class="subtitle">Queue • Scheduler • TikTok • Analytics</p>
+      <p class="subtitle">YouTube uploads, TikTok sourcing, quota intelligence</p>
       <div id="auth-status" class="auth-status"></div>
       <div id="channel-info" class="channel-info" style="display:none;"></div>
     </header>
 
-    <!-- Navigation — แต่ละ tab = 1 URL path -->
     <nav class="tabs">
-      <button class="tab active" data-path="/">📊 Dashboard</button>
-      <button class="tab" data-path="/upload">📤 อัปโหลด</button>
-      <button class="tab" data-path="/tiktok">🎵 TikTok</button>
-      <button class="tab" data-path="/seo">💎 SEO</button>
-      <button class="tab" data-path="/files">📁 ไฟล์</button>
-      <button class="tab" data-path="/queue">🔄 คิว</button>
-      <button class="tab" data-path="/scheduler">⏰ Scheduler</button>
-      <button class="tab" data-path="/settings">⚙️ ตั้งค่า</button>
-      <button class="tab" data-path="/history">📋 ประวัติ</button>
+      <button class="tab active" data-path="/">Dashboard</button>
+      <button class="tab" data-path="/tiktok">TikTok</button>
+      <button class="tab" data-path="/accounts">Accounts</button>
+      <button class="tab" data-path="/seo">SEO</button>
+      <button class="tab" data-path="/activity">Activity</button>
+      <button class="tab" data-path="/settings">Settings</button>
     </nav>
 
     <!-- Status Bar -->
     <div id="status-bar" class="status-bar">
       <div class="status-bar-item" id="sb-connection">
-        <span class="sb-dot connected"></span>
-        <span class="sb-text">เชื่อมต่อ</span>
+        <div class="status-bar-item-header">
+          <span class="sb-dot connected"></span>
+          <span>การเชื่อมต่อ</span>
+        </div>
+        <span class="sb-text">เชื่อมต่อแล้ว</span>
       </div>
+      
+      <div class="status-bar-item" id="sb-quota">
+        <div class="sb-label">YouTube Quota</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="sb-icon">Q</span>
+          <span class="sb-text" id="sb-quota-text">โหลด...</span>
+        </div>
+      </div>
+      
       <div class="status-bar-item" id="sb-queue">
-        <span class="sb-icon">🔄</span>
-        <span class="sb-text">คิวว่าง</span>
+        <div class="sb-label">Upload Queue</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="sb-icon">U</span>
+          <span class="sb-text">คิวว่าง</span>
+        </div>
       </div>
-      <div class="status-bar-item" id="sb-uptime">
-        <span class="sb-icon">⏱️</span>
-        <span class="sb-text">-</span>
-      </div>
+      
       <div class="status-bar-item" id="sb-health">
-        <span class="sb-icon">💚</span>
-        <span class="sb-text">ปกติ</span>
+        <div class="sb-label">System Health</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="sb-icon">H</span>
+          <span class="sb-text">ปกติ</span>
+        </div>
       </div>
-      <button class="status-bar-btn" onclick="runCleanup()" title="ล้าง temp">🧹</button>
+      
+      <div class="status-bar-item" id="sb-uptime">
+        <div class="sb-label">Uptime</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="sb-icon">T</span>
+          <span class="sb-text">-</span>
+        </div>
+      </div>
+      
+      <button class="status-bar-btn" onclick="runCleanup()" title="ล้างไฟล์ชั่วคราว">
+        <span>ล้างข้อมูล</span>
+      </button>
     </div>
 
     <!-- Page Content (loaded dynamically per route) -->
@@ -64,7 +87,7 @@
   <!-- Upload Modal (shared across pages) -->
   <div id="upload-modal" class="modal" style="display:none;">
     <div class="modal-content">
-      <h3>📤 อัปโหลดวิดีโอ</h3>
+      <h3>อัปโหลดวิดีโอ</h3>
       <form id="upload-form">
         <input type="hidden" id="upload-filename">
         <div class="form-group">
@@ -82,14 +105,14 @@
         <div class="form-group">
           <label for="upload-privacy">ความเป็นส่วนตัว</label>
           <select id="upload-privacy">
-            <option value="public">🌐 สาธารณะ</option>
-            <option value="unlisted">� ไม่แสดงในรายการ</option>
-            <option value="private">🔒 ส่วนตัว</option>
+            <option value="public">สาธารณะ</option>
+            <option value="unlisted">ไม่แสดงในรายการ</option>
+            <option value="private">ส่วนตัว</option>
           </select>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" onclick="closeModal()">ยกเลิก</button>
-          <button type="submit" class="btn btn-primary">� อัปโหลด</button>
+          <button type="submit" class="btn btn-primary">อัปโหลด</button>
         </div>
       </form>
     </div>
@@ -98,9 +121,14 @@
   <!-- Keyboard Shortcuts Modal -->
   <div id="shortcuts-modal" class="modal" style="display:none;">
     <div class="modal-content">
-      <h3>⌨️ คีย์ลัด</h3>
+      <h3>คีย์ลัด</h3>
       <div class="shortcuts-grid">
-        <div class="shortcut-item"><kbd>1</kbd>-<kbd>8</kbd> <span>สลับหน้า</span></div>
+        <div class="shortcut-item"><kbd>1</kbd> <span>Dashboard</span></div>
+        <div class="shortcut-item"><kbd>2</kbd> <span>TikTok</span></div>
+        <div class="shortcut-item"><kbd>3</kbd> <span>Accounts</span></div>
+        <div class="shortcut-item"><kbd>4</kbd> <span>SEO</span></div>
+        <div class="shortcut-item"><kbd>5</kbd> <span>Activity</span></div>
+        <div class="shortcut-item"><kbd>6</kbd> <span>Settings</span></div>
         <div class="shortcut-item"><kbd>R</kbd> <span>รีเฟรช</span></div>
         <div class="shortcut-item"><kbd>?</kbd> <span>คีย์ลัด</span></div>
         <div class="shortcut-item"><kbd>Esc</kbd> <span>ปิด</span></div>

@@ -7,6 +7,7 @@
 
 const EventEmitter = require('events');
 const logger = require('../utils/logger');
+const activityLogger = require('../utils/activity');
 
 class EventBus extends EventEmitter {
   constructor() {
@@ -91,6 +92,20 @@ class EventBus extends EventEmitter {
       when: 'upload:completed',
       priority: 10,
       then: (payload, bus) => {
+        // Activity Log
+        activityLogger.log(
+          'upload:success',
+          `✅ อัปโหลด ${payload.filename} สำเร็จ`,
+          {
+            filename: payload.filename,
+            youtubeUrl: payload.youtubeUrl,
+            videoId: payload.videoId,
+            source: payload.source || 'local',
+            size: payload.size || 0
+          },
+          'success'
+        );
+        
         // Notify stats (ใช้ size จาก payload หรือ 0)
         bus.dispatch('stats:increment', {
           type: 'upload',
@@ -114,6 +129,18 @@ class EventBus extends EventEmitter {
       when: 'upload:failed',
       priority: 10,
       then: (payload, bus) => {
+        // Activity Log
+        activityLogger.log(
+          'upload:failed',
+          `❌ อัปโหลดล้มเหลว: ${payload.filename}`,
+          {
+            filename: payload.filename,
+            error: payload.error,
+            source: payload.source || 'local'
+          },
+          'error'
+        );
+        
         bus.dispatch('stats:increment', {
           type: 'failure',
           filename: payload.filename,
@@ -152,6 +179,18 @@ class EventBus extends EventEmitter {
       when: 'queue:drain',
       priority: 5,
       then: (payload, bus) => {
+        // Activity Log
+        activityLogger.log(
+          'queue:completed',
+          `🎉 คิวเสร็จสิ้น - สำเร็จ ${payload.done || 0}, ล้มเหลว ${payload.failed || 0}`,
+          {
+            done: payload.done || 0,
+            failed: payload.failed || 0,
+            total: (payload.done || 0) + (payload.failed || 0)
+          },
+          'success'
+        );
+        
         bus.dispatch('notification:send', {
           level: 'success',
           title: 'คิวเสร็จสิ้น',
@@ -190,6 +229,17 @@ class EventBus extends EventEmitter {
       when: 'tiktok:downloaded',
       priority: 5,
       then: (payload, bus) => {
+        // Activity Log
+        activityLogger.log(
+          'tiktok:downloaded',
+          `⬇️ ดาวน์โหลด TikTok: ${payload.filename}`,
+          {
+            filename: payload.filename,
+            provider: payload.provider
+          },
+          'info'
+        );
+        
         bus.dispatch('notification:send', {
           level: 'info',
           title: 'ดาวน์โหลด TikTok สำเร็จ',
