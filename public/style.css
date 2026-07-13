@@ -2950,3 +2950,127 @@ kbd {
   border-radius: 5px !important;
   font-size: 0.62rem !important;
 }
+
+/* ══════════════════════════════════════════════════════════
+   Settings page
+   ══════════════════════════════════════════════════════════ */
+.settings-page { display: flex; flex-direction: column; gap: 16px; }
+
+.settings-card .card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.settings-card .card-header h3 { margin: 0; }
+
+.card-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 3px 0 0;
+  font-weight: 400;
+}
+
+/* Two-column row inside a card-body */
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 560px) { .settings-row { grid-template-columns: 1fr; } }
+
+/* Inline button group */
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Status text (scheduler last-run) */
+.settings-status-text {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  padding: 10px 0 6px;
+  line-height: 1.4;
+}
+
+/* Quota bar */
+.quota-bar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.quota-remaining-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.quota-track {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.quota-track-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.quota-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.quota-alert {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+.quota-alert-error {
+  background: var(--error-bg);
+  color: var(--error);
+  border: 1px solid rgba(220,38,38,.18);
+}
+.quota-alert-warn {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid rgba(181,71,8,.18);
+}
+
+/* Quota guide panel */
+.quota-guide-panel {
+  background: var(--surface, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+.quota-guide-panel h4 {
+  font-size: 0.9rem;
+  font-weight: 650;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+}
+
+/* Quota pause banner */
+.quota-pause-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--error-bg);
+  border: 1px solid rgba(220,38,38,.2);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  color: var(--error);
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
