@@ -416,12 +416,22 @@ class Scheduler {
       // Download + upload via queue
       const tiktokService = require('./tiktok');
 
+      // สร้างชื่อไฟล์จาก video ก่อน (ใช้เป็น queue label)
+      const suggestedFilename = (video.desc || keyword).substring(0, 60)
+        .replace(/[^\w\s\-ก-๙]/g, '').trim() || `tiktok_${video.id || Date.now()}`;
+
       uploadQueue.add(async () => {
-        // Download no-watermark
-        const downloaded = await tiktokService.downloadNoWatermark(
-          video.videoUrl,
-          (video.desc || keyword).substring(0, 60)
-        );
+        let downloaded = null;
+        try {
+          // Download no-watermark
+          downloaded = await tiktokService.downloadNoWatermark(
+            video.videoUrl,
+            suggestedFilename
+          );
+        } catch (dlErr) {
+          logger.error('[Watchlist] Download failed', { keyword, error: dlErr.message, videoUrl: video.videoUrl });
+          throw dlErr;
+        }
 
         // Upload to YouTube
         const result = await youtubeService.uploadVideo({
@@ -458,7 +468,7 @@ class Scheduler {
         this._updateStats(downloaded.filepath, true);
         logger.info('[Watchlist] Upload complete', { keyword, title: metadata.title, youtubeUrl: result.youtubeUrl });
         return result;
-      }, { filename: downloaded?.filename || keyword });
+      }, { filename: suggestedFilename });
     });
   }
 }
