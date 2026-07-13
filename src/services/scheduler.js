@@ -15,6 +15,7 @@ class Scheduler {
     this.watchedFolder = null;
     this._quotaWaitTimer = null;   // timer รอ quota reset
     this._quotaPaused = false;     // สถานะหยุดชั่วคราวเพราะ quota หมด
+    this._loopRunning = false;     // ป้องกัน concurrent loop
   }
 
   /**
@@ -190,10 +191,10 @@ class Scheduler {
     schedulerStore.save({ ...schedulerStore.load(), lastRun: new Date().toISOString() });
     logger.info('Scheduler scan complete', { scanned: files.length, queued });
 
-    // ★ Run keyword watchlist after folder scan
-    this.runWatchlist().catch(err =>
-      logger.error('Watchlist run error', { error: err.message })
-    );
+    // ★ Run keyword watchlist after folder scan — then start continuous loop
+    this.runWatchlist()
+      .then(() => this._startContinuousLoop())
+      .catch(err => logger.error('Watchlist run error', { error: err.message }));
 
     return { scanned: files.length, queued };
   }
@@ -308,6 +309,79 @@ class Scheduler {
     }
 
     return updated;
+  }
+
+  /**
+   * Continuous Loop — วนซ้ำทันทีหลังคิวว่าง + watchlist run เสร็จ
+   * ไม่ต้องรอ interval ถัดไป
+   * ป้องกัน concurrent ด้วย _loopRunning flag
+   */
+  async _startContinuousLoop() {
+    if (this._loopRunning) return;
+    if (!schedulerStore.load().enabled) return;
+
+    this._loopRunning = true;
+    logger.info('[Loop] Continuous loop started');
+
+    try {
+      while (true) {
+        // 1. เช็คว่า scheduler ยังเปิดอยู่
+        if (!schedulerStore.load().enabled) {
+          logger.info('[Loop] Scheduler disabled — stopping loop');
+          break;
+        }
+
+        // 2. เช็ค quota
+        if (!this._checkQuotaBeforeScan()) {
+          logger.info('[Loop] Quota หมด — หยุดรอ reset แล้วกลับมาใหม่');
+          break; // _waitForQuotaReset จะเรียก scan() ซึ่งจะ trigger loop ใหม่
+        }
+
+        // 3. รอให้คิวว่างก่อน
+        await this._waitForQueueEmpty();
+
+        // 4. เช็ค quota อีกครั้งหลังรอ
+        if (!this._checkQuotaBeforeScan()) break;
+
+        // 5. Run watchlist รอบถัดไป (keyword ถัดไปใน rotation)
+        logger.info('[Loop] Running next watchlist cycle...');
+        const result = await this.runWatchlist();
+
+        // 6. ถ้าไม่มีอะไร queue เลย (ซ้ำหมด/ไม่มี keyword) → พักสักครู่แล้วลองใหม่
+        if (result.queued === 0) {
+          const cooldownMs = 5 * 60 * 1000; // 5 นาที
+          logger.info(`[Loop] ไม่มีคลิปใหม่ — รอ ${cooldownMs / 60000} นาทีแล้วลองใหม่`);
+          await this._delay(cooldownMs);
+        }
+        // ถ้ามีของ queue → loop ต่อทันที (จะรอ queue ว่างที่ step 3)
+      }
+    } finally {
+      this._loopRunning = false;
+      logger.info('[Loop] Continuous loop ended');
+    }
+  }
+
+  /**
+   * รอจนกว่าคิวจะว่าง (pending + processing = 0)
+   * poll ทุก 10 วินาที
+   */
+  _waitForQueueEmpty() {
+    return new Promise(resolve => {
+      const check = () => {
+        const s = uploadQueue.getStatus();
+        if ((s.pending || 0) + (s.processing || 0) === 0) {
+          resolve();
+        } else {
+          logger.debug(`[Loop] Queue ยังมีงาน — pending:${s.pending} processing:${s.processing} — รออีก 10s`);
+          setTimeout(check, 10000);
+        }
+      };
+      check();
+    });
+  }
+
+  _delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

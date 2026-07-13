@@ -56,6 +56,10 @@ class WatchlistService extends EventEmitter {
       steps:          [],
       summary:        null,
     };
+    // Pagination cursors — เก็บ cursor ต่อ keyword เพื่อหน้าถัดไปใน loop
+    // รีเซ็ตเมื่อได้ยล keyword ครบ 1 รอบ
+    this._cursors = {};     // { keyword: cursor }
+    this._seenIds = {};     // { keyword: Set<id> } — ป้องกันซ้ำข้ามรอบ
   }
 
   // Push a step to live log and emit to SSE listeners
@@ -173,14 +177,30 @@ class WatchlistService extends EventEmitter {
       this._step('search', `🔍 กำลังค้นหา "${kw.keyword}"...`, { keyword: kw.keyword });
 
       try {
-        const videos = await tiktokService.searchVideos(kw.keyword, kw.countPerRun);
-        this._step('found', `พบ ${videos.length} คลิปจาก "${kw.keyword}"`, { count: videos.length });
+        // ── Paginated search — ต่อจาก cursor ที่ค้างไว้ ──────────────
+        if (!this._seenIds[kw.keyword]) this._seenIds[kw.keyword] = new Set();
+        const seenSet = this._seenIds[kw.keyword];
 
+        const videos = await tiktokService.searchVideos(kw.keyword, kw.countPerRun);
+        // Filter out already-seen IDs from this session
+        const freshVideos = videos.filter(v => {
+          const vid = v.id || v.videoUrl;
+          if (seenSet.has(vid)) return false;
+          seenSet.add(vid);
+          // Limit seenIds to 500 per keyword to avoid memory leak
+          if (seenSet.size > 500) {
+            const first = seenSet.values().next().value;
+            seenSet.delete(first);
+          }
+          return true;
+        });
+
+        this._step('found', `พบ ${freshVideos.length} คลิปใหม่ (${videos.length - freshVideos.length} ข้ามซ้ำ session) จาก "${kw.keyword}"`, { count: freshVideos.length });
         this.runState.phase = 'filtering';
         let kwQueued  = 0;
         let kwSkipped = 0;
 
-        for (const video of videos) {
+        for (const video of freshVideos) {
           // duplicate check
           const vidId = extractTikTokVideoId(video.videoUrl);
           const dup   = isDuplicateTikTok(video.videoUrl, vidId, uploads.load());
@@ -220,8 +240,8 @@ class WatchlistService extends EventEmitter {
           totalQueued++;
         }
 
-        this._updateStats(kw.id, { found: videos.length, queued: kwQueued });
-        summary.push({ keyword: kw.keyword, found: videos.length, queued: kwQueued, skipped: kwSkipped });
+        this._updateStats(kw.id, { found: freshVideos.length, queued: kwQueued });
+        summary.push({ keyword: kw.keyword, found: freshVideos.length, queued: kwQueued, skipped: kwSkipped });
         this._step('done_kw', `เสร็จ "${kw.keyword}" — คิว ${kwQueued}, ข้าม ${kwSkipped}`, { kwQueued, kwSkipped });
       } catch (err) {
         this._step('error', `ข้อผิดพลาด "${kw.keyword}": ${err.message}`, { error: err.message });
