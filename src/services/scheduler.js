@@ -429,6 +429,8 @@ class Scheduler {
             suggestedFilename
           );
         } catch (dlErr) {
+          const watchlistService = require('./watchlist');
+          watchlistService.notifyDlError(); // trigger backoff if repeated
           logger.error('[Watchlist] Download failed', { keyword, error: dlErr.message, videoUrl: video.videoUrl });
           throw dlErr;
         }

@@ -1,117 +1,153 @@
 /**
- * Keyword Watchlist Service
+ * Keyword Watchlist Service — Smart Auto-loop
  *
- * เก็บ keywords ที่ต้องการให้ Scheduler ค้นหา TikTok แล้วอัปโหลด YouTube
- * อัตโนมัติทุกรอบ โดยไม่ต้องกดค้นหาเอง
- *
- * Flow:
- *   Scheduler.scan() → watchlist.runAll() → tiktokService.search()
- *     → filter virality → filter duplicate → YouTube upload queue
+ * Features:
+ * - Smart keyword ordering (successRate — keyword ที่ผ่านมากก่อน)
+ * - Session seenIds (ป้องกันซ้ำข้ามรอบ)
+ * - Download error backoff (ถ้า DL ล้มเหลวหลายครั้ง → พัก)
+ * - Auto trending fallback (ถ้า watchlist ว่าง → ดึง TH trending แทน)
+ * - Live SSE progress (step-by-step log)
  */
-const path = require('path');
 const { EventEmitter } = require('events');
 const logger = require('../utils/logger');
 const { Store } = require('../utils/store');
 
-// ── Persistent store ────────────────────────────────────────────
 const watchlistStore = new Store('watchlist.json', {
-  keywords: [],          // array of WatchKeyword objects
-  lastRunAt: null,       // ISO string
-  totalAutoUploaded: 0,  // lifetime counter
+  keywords: [], lastRunAt: null, totalAutoUploaded: 0,
 });
 
-/**
- * WatchKeyword shape:
- * {
- *   id:           string,      // uuid-lite
- *   keyword:      string,
- *   enabled:      boolean,
- *   countPerRun:  number,      // how many videos to fetch per scheduler run
- *   minScore:     number,      // minimum opportunity score to upload (0–100)
- *   region:       string,      // 'TH' | 'US' | ... (for trending mode)
- *   addedAt:      ISO string,
- *   lastRunAt:    ISO string | null,
- *   totalUploaded: number,
- *   totalFound:   number,
- * }
- */
+function makeId() { return Math.random().toString(36).slice(2, 10); }
 
-// ── Helpers ─────────────────────────────────────────────────────
-function makeId() {
-  return Math.random().toString(36).slice(2, 10);
+// ── Lazy duplicate helpers (avoid circular require from tiktok route) ─
+function extractId(url) {
+  if (!url) return null;
+  const m = url.match(/\/(video|photo)\/(\d+)/);
+  if (m) return m[2];
+  const s = url.match(/\/([A-Za-z0-9]+)\/?$/);
+  return s ? s[1] : null;
+}
+function isDup(videoUrl, videoId, allUploads) {
+  for (const r of allUploads) {
+    if (r.source_url && r.source_url === videoUrl) return true;
+    if (r.source_url && videoId && extractId(r.source_url) === videoId) return true;
+    if (r.tiktok_video_id && r.tiktok_video_id === videoId) return true;
+  }
+  return false;
 }
 
-// ── Public API ───────────────────────────────────────────────────
 class WatchlistService extends EventEmitter {
   constructor() {
     super();
-    // Live run state — SSE clients + frontend poll this
     this.runState = {
-      running:        false,
-      startedAt:      null,
-      phase:          'idle',
-      currentKeyword: null,
-      keywordIndex:   0,
-      keywordTotal:   0,
-      steps:          [],
-      summary:        null,
+      running: false, startedAt: null, phase: 'idle',
+      currentKeyword: null, keywordIndex: 0, keywordTotal: 0,
+      steps: [], summary: null,
     };
-    // Pagination cursors — เก็บ cursor ต่อ keyword เพื่อหน้าถัดไปใน loop
-    // รีเซ็ตเมื่อได้ยล keyword ครบ 1 รอบ
-    this._cursors = {};     // { keyword: cursor }
-    this._seenIds = {};     // { keyword: Set<id> } — ป้องกันซ้ำข้ามรอบ
+    this._seenIds      = {};  // { keyword: Set<id> }
+    this._kwRate       = {};  // { keyword: { passed, total } } — smart sort
+    this._dlErrors     = 0;
+    this._dlErrReset   = 0;
   }
 
-  // Push a step to live log and emit to SSE listeners
-  _step(type, message, extra = {}) {
-    const step = { type, message, ts: Date.now(), ...extra };
+  // ── Live log ────────────────────────────────────────────────────
+  _step(type, msg, extra = {}) {
+    const step = { type, message: msg, ts: Date.now(), ...extra };
     this.runState.steps.push(step);
     if (this.runState.steps.length > 100) this.runState.steps.shift();
     this.emit('progress', { ...this.runState, lastStep: step });
   }
 
-  getRunState() {
-    return { ...this.runState };
+  getRunState() { return { ...this.runState }; }
+
+  // ── Smart keyword ordering ──────────────────────────────────────
+  _sorted(keywords) {
+    return [...keywords].sort((a, b) => {
+      const ra = this._kwRate[a.keyword], rb = this._kwRate[b.keyword];
+      const rA = ra && ra.total >= 3 ? ra.passed / ra.total : 0.5;
+      const rB = rb && rb.total >= 3 ? rb.passed / rb.total : 0.5;
+      return rB - rA;
+    });
   }
 
-  getAll() {
-    return watchlistStore.load().keywords || [];
+  _trackRate(keyword, passed, total) {
+    if (!this._kwRate[keyword]) this._kwRate[keyword] = { passed: 0, total: 0 };
+    this._kwRate[keyword].passed += passed;
+    this._kwRate[keyword].total  += total;
   }
 
-  get(id) {
-    return this.getAll().find(k => k.id === id) || null;
+  // ── DL error backoff ───────────────────────────────────────────
+  _dlError() {
+    if (Date.now() - this._dlErrReset > 10 * 60 * 1000) {
+      this._dlErrors = 0; this._dlErrReset = Date.now();
+    }
+    this._dlErrors++;
   }
+
+  async _dlBackoff() {
+    if (this._dlErrors >= 5) {
+      const ms = Math.min(this._dlErrors * 30000, 5 * 60 * 1000);
+      this._step('warn', `⚠️ DL ล้มเหลว ${this._dlErrors} ครั้ง — รอ ${ms/1000}s`);
+      await new Promise(r => setTimeout(r, ms));
+      this._dlErrors = 0;
+    }
+  }
+
+  // ── Auto trending fallback ──────────────────────────────────────
+  async _trendingFallback() {
+    try {
+      const tiktok = require('./tiktok');
+      this._step('info', '🌟 Watchlist ว่าง — ดึง Trending TH แทน...');
+      const vids = await tiktok.getTrending('TH', 20);
+      if (!vids.length) return [];
+
+      const keywords = vids
+        .map(v => { const t = (v.desc||'').match(/#[\u0E00-\u0E7Fa-zA-Z0-9]+/g); return t?.[0]?.replace('#',''); })
+        .filter(Boolean)
+        .filter((k,i,a) => a.indexOf(k) === i)
+        .slice(0, 5);
+
+      this._step('info', `Trending keywords: ${keywords.join(', ')}`);
+      return keywords.map(kw => ({
+        id: `auto_${makeId()}`, keyword: kw, enabled: true,
+        countPerRun: 6, minScore: 45, isAuto: true,
+        totalUploaded: 0, totalFound: 0,
+      }));
+    } catch (e) {
+      logger.warn('[Watchlist] Trending fallback failed', { error: e.message });
+      return [];
+    }
+  }
+
+  // ── CRUD ────────────────────────────────────────────────────────
+  getAll() { return watchlistStore.load().keywords || []; }
+
+  get(id) { return this.getAll().find(k => k.id === id) || null; }
 
   add({ keyword, countPerRun = 8, minScore = 52, enabled = true }) {
-    if (!keyword || !keyword.trim()) throw new Error('keyword จำเป็น');
+    if (!keyword?.trim()) throw new Error('keyword จำเป็น');
     const data = watchlistStore.load();
-    // ป้องกัน keyword ซ้ำ
-    if (data.keywords.find(k => k.keyword.toLowerCase() === keyword.trim().toLowerCase())) {
+    if (data.keywords.find(k => k.keyword.toLowerCase() === keyword.trim().toLowerCase()))
       throw new Error(`"${keyword}" มีอยู่แล้ว`);
-    }
     const entry = {
-      id:           makeId(),
-      keyword:      keyword.trim(),
-      enabled:      !!enabled,
-      countPerRun:  Math.max(1, Math.min(20, parseInt(countPerRun) || 8)),
-      minScore:     Math.max(0, Math.min(100, parseInt(minScore) || 52)),
-      addedAt:      new Date().toISOString(),
-      lastRunAt:    null,
-      totalUploaded: 0,
-      totalFound:   0,
+      id: makeId(), keyword: keyword.trim(), enabled: !!enabled,
+      countPerRun: Math.max(1, Math.min(20, +countPerRun || 8)),
+      minScore:    Math.max(0, Math.min(100, +minScore   || 52)),
+      addedAt: new Date().toISOString(), lastRunAt: null,
+      totalUploaded: 0, totalFound: 0,
     };
     data.keywords.push(entry);
     watchlistStore.save(data);
-    logger.info('[Watchlist] Added keyword', { keyword: entry.keyword });
+    logger.info('[Watchlist] Added', { keyword: entry.keyword });
     return entry;
   }
 
   update(id, changes) {
     const data = watchlistStore.load();
-    const idx = data.keywords.findIndex(k => k.id === id);
+    const idx  = data.keywords.findIndex(k => k.id === id);
     if (idx === -1) throw new Error('ไม่พบ keyword');
-    const allowed = ['keyword', 'enabled', 'countPerRun', 'minScore'];
-    allowed.forEach(f => { if (changes[f] !== undefined) data.keywords[idx][f] = changes[f]; });
+    ['keyword','enabled','countPerRun','minScore'].forEach(f => {
+      if (changes[f] !== undefined) data.keywords[idx][f] = changes[f];
+    });
     watchlistStore.save(data);
     return data.keywords[idx];
   }
@@ -120,147 +156,136 @@ class WatchlistService extends EventEmitter {
     const data = watchlistStore.load();
     data.keywords = data.keywords.filter(k => k.id !== id);
     watchlistStore.save(data);
-    logger.info('[Watchlist] Removed keyword', { id });
   }
 
-  // ── Auto-run (called by Scheduler) ────────────────────────────
-
-  /**
-   * Run all enabled keywords:
-   *   1. Search TikTok for each keyword
-   *   2. Filter by minScore + duplicate check
-   *   3. Push qualifying videos into upload queue
-   *
-   * Returns summary { queued, skipped, keywords }
-   */
-  async runAll(uploadCallback) {
-    const data    = watchlistStore.load();
-    const enabled = (data.keywords || []).filter(k => k.enabled);
-
-    // ── Reset run state ──────────────────────────────────────────
-    this.runState = {
-      running:        true,
-      startedAt:      new Date().toISOString(),
-      phase:          'starting',
-      currentKeyword: null,
-      keywordIndex:   0,
-      keywordTotal:   enabled.length,
-      steps:          [],
-      summary:        null,
+  getStats() {
+    const d = watchlistStore.load();
+    return {
+      total: (d.keywords||[]).length,
+      enabled: (d.keywords||[]).filter(k=>k.enabled).length,
+      lastRunAt: d.lastRunAt,
+      totalAutoUploaded: d.totalAutoUploaded || 0,
+      smartRates: Object.entries(this._kwRate).map(([kw, r]) => ({
+        keyword: kw,
+        rate: r.total > 0 ? +(r.passed/r.total*100).toFixed(0) : null,
+        total: r.total,
+      })),
     };
-    this.emit('progress', this.runState);
+  }
 
+  // ── Main run ────────────────────────────────────────────────────
+  async runAll(uploadCallback) {
+    const data = watchlistStore.load();
+    let enabled = (data.keywords || []).filter(k => k.enabled);
+
+    // Trending fallback ถ้าไม่มี keyword
     if (enabled.length === 0) {
-      this._step('info', 'ไม่มี keyword ที่เปิดใช้งาน — ข้าม');
-      this.runState.running = false;
-      this.runState.phase   = 'done';
-      this.emit('progress', this.runState);
-      return { queued: 0, skipped: 0, keywords: [] };
+      enabled = await this._trendingFallback();
+      if (enabled.length === 0) {
+        this.runState = { ...this.runState, running: false, phase: 'done',
+          summary: { totalQueued: 0, totalSkipped: 0, keywords: [] } };
+        this._step('info', 'ไม่มี keyword และ trending ก็ดึงไม่ได้ — ข้าม');
+        return { queued: 0, skipped: 0, keywords: [] };
+      }
     }
 
-    this._step('start', `เริ่มต้น — ${enabled.length} keywords`);
+    // Smart sort
+    enabled = this._sorted(enabled);
 
-    const tiktokService  = require('./tiktok');
-    const seoService     = require('./seo');
-    const { uploads }    = require('../utils/store');
-    const { extractTikTokVideoId, isDuplicateTikTok } = getHelpers();
+    this.runState = {
+      running: true, startedAt: new Date().toISOString(), phase: 'starting',
+      currentKeyword: null, keywordIndex: 0, keywordTotal: enabled.length,
+      steps: [], summary: null,
+    };
+    this.emit('progress', this.runState);
+    this._step('start', `เริ่มต้น — ${enabled.length} keywords (เรียงตาม success rate)`);
 
-    let totalQueued  = 0;
-    let totalSkipped = 0;
-    const summary    = [];
+    const tiktok  = require('./tiktok');
+    const seo     = require('./seo');
+    const { uploads } = require('../utils/store');
+
+    let totalQueued = 0, totalSkipped = 0;
+    const summary = [];
 
     for (let i = 0; i < enabled.length; i++) {
       const kw = enabled[i];
       this.runState.keywordIndex   = i + 1;
       this.runState.currentKeyword = kw.keyword;
       this.runState.phase          = 'searching';
-      this._step('search', `🔍 กำลังค้นหา "${kw.keyword}"...`, { keyword: kw.keyword });
+      this._step('search', `🔍 ค้นหา "${kw.keyword}"...`);
+
+      await this._dlBackoff();
 
       try {
-        // ── Paginated search — ต่อจาก cursor ที่ค้างไว้ ──────────────
-        if (!this._seenIds[kw.keyword]) this._seenIds[kw.keyword] = new Set();
-        const seenSet = this._seenIds[kw.keyword];
+        const videos = await tiktok.searchVideos(kw.keyword, kw.countPerRun);
 
-        const videos = await tiktokService.searchVideos(kw.keyword, kw.countPerRun);
-        // Filter out already-seen IDs from this session
-        const freshVideos = videos.filter(v => {
-          const vid = v.id || v.videoUrl;
-          if (seenSet.has(vid)) return false;
-          seenSet.add(vid);
-          // Limit seenIds to 500 per keyword to avoid memory leak
-          if (seenSet.size > 500) {
-            const first = seenSet.values().next().value;
-            seenSet.delete(first);
-          }
+        // Session dedup
+        if (!this._seenIds[kw.keyword]) this._seenIds[kw.keyword] = new Set();
+        const seen = this._seenIds[kw.keyword];
+        const fresh = videos.filter(v => {
+          const id = v.id || v.videoUrl;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          if (seen.size > 500) seen.delete(seen.values().next().value);
           return true;
         });
 
-        this._step('found', `พบ ${freshVideos.length} คลิปใหม่ (${videos.length - freshVideos.length} ข้ามซ้ำ session) จาก "${kw.keyword}"`, { count: freshVideos.length });
+        this._step('found', `พบ ${fresh.length} คลิปใหม่ (ข้ามซ้ำ ${videos.length - fresh.length}) จาก "${kw.keyword}"`);
+
         this.runState.phase = 'filtering';
-        let kwQueued  = 0;
-        let kwSkipped = 0;
+        let kwQ = 0, kwS = 0, kwP = 0;
 
-        for (const video of freshVideos) {
-          // duplicate check
-          const vidId = extractTikTokVideoId(video.videoUrl);
-          const dup   = isDuplicateTikTok(video.videoUrl, vidId, uploads.load());
-          if (dup.duplicate) {
-            kwSkipped++;
-            this._step('skip', `ข้าม (อัปแล้ว): ${(video.desc || '').substring(0, 40)}`, { reason: 'duplicate' });
-            totalSkipped++;
+        for (const v of fresh) {
+          const vid = extractId(v.videoUrl);
+          if (isDup(v.videoUrl, vid, uploads.load())) {
+            kwS++; totalSkipped++;
+            this._step('skip', `ข้าม (ซ้ำ DB): ${(v.desc||'').substring(0,40)}`);
             continue;
           }
-
-          // virality / score check
-          const virality   = seoService.calculateViralityScore(video);
-          const validation = seoService.validateForMonetization(video, video.desc || '');
+          const virality   = seo.calculateViralityScore(v);
+          const validation = seo.validateForMonetization(v, v.desc || '');
           if (validation.status === 'blocked') {
-            kwSkipped++;
-            this._step('skip', `ข้าม (บล็อก): ${(video.desc || '').substring(0, 40)}`, { reason: 'blocked' });
-            totalSkipped++;
+            kwS++; totalSkipped++;
+            this._step('skip', `ข้าม (บล็อก): ${(v.desc||'').substring(0,40)}`);
             continue;
           }
-
-          const opportunity = seoService.analyzeOpportunity(
-            { ...video, virality, validation }, { alreadyUploaded: false }
-          );
-          const score = opportunity?.score ?? virality?.score ?? 0;
+          const opp   = seo.analyzeOpportunity({ ...v, virality, validation }, { alreadyUploaded: false });
+          const score = opp?.score ?? virality?.score ?? 0;
           if (score < kw.minScore) {
-            kwSkipped++;
-            this._step('skip', `ข้าม (score ${score} < ${kw.minScore}): ${(video.desc || '').substring(0, 40)}`, { reason: 'low_score', score });
-            totalSkipped++;
+            kwS++; totalSkipped++;
+            this._step('skip', `ข้าม (score ${score}<${kw.minScore}): ${(v.desc||'').substring(0,40)}`);
             continue;
           }
 
-          // Queue
+          kwP++;
           this.runState.phase = 'uploading';
-          this._step('queue', `✓ เพิ่มคิว (score ${score}): ${(video.desc || '').substring(0, 50)}`, { score });
-          await uploadCallback({ video: { ...video, virality, validation, opportunity }, keyword: kw.keyword, watchId: kw.id });
-          kwQueued++;
-          totalQueued++;
+          this._step('queue', `✓ คิว (score ${score}): ${(v.desc||'').substring(0,50)}`);
+          await uploadCallback({ video: { ...v, virality, validation, opportunity: opp }, keyword: kw.keyword, watchId: kw.id });
+          kwQ++; totalQueued++;
         }
 
-        this._updateStats(kw.id, { found: freshVideos.length, queued: kwQueued });
-        summary.push({ keyword: kw.keyword, found: freshVideos.length, queued: kwQueued, skipped: kwSkipped });
-        this._step('done_kw', `เสร็จ "${kw.keyword}" — คิว ${kwQueued}, ข้าม ${kwSkipped}`, { kwQueued, kwSkipped });
+        this._trackRate(kw.keyword, kwP, fresh.length);
+        if (!kw.isAuto) this._updateStats(kw.id, { found: fresh.length, queued: kwQ });
+        summary.push({ keyword: kw.keyword, found: fresh.length, queued: kwQ, skipped: kwS });
+        this._step('done_kw', `เสร็จ "${kw.keyword}" — คิว ${kwQ}, ข้าม ${kwS}`);
       } catch (err) {
-        this._step('error', `ข้อผิดพลาด "${kw.keyword}": ${err.message}`, { error: err.message });
+        this._step('error', `ข้อผิดพลาด "${kw.keyword}": ${err.message}`);
         summary.push({ keyword: kw.keyword, error: err.message, queued: 0 });
       }
     }
 
-    // Finalize
-    const d = watchlistStore.load();
-    d.lastRunAt          = new Date().toISOString();
-    d.totalAutoUploaded  = (d.totalAutoUploaded || 0) + totalQueued;
-    watchlistStore.save(d);
+    if (!enabled.every(k => k.isAuto)) {
+      const d = watchlistStore.load();
+      d.lastRunAt = new Date().toISOString();
+      d.totalAutoUploaded = (d.totalAutoUploaded || 0) + totalQueued;
+      watchlistStore.save(d);
+    }
 
     this.runState.running = false;
     this.runState.phase   = 'done';
     this.runState.summary = { totalQueued, totalSkipped, keywords: summary };
-    this._step('complete', `✅ รันเสร็จ — เพิ่มคิว ${totalQueued} คลิป, ข้าม ${totalSkipped}`, { totalQueued, totalSkipped });
+    this._step('complete', `✅ เสร็จ — คิว ${totalQueued}, ข้าม ${totalSkipped}`);
     this.emit('progress', this.runState);
-
     return { queued: totalQueued, skipped: totalSkipped, keywords: summary };
   }
 
@@ -274,42 +299,8 @@ class WatchlistService extends EventEmitter {
     watchlistStore.save(data);
   }
 
-  getStats() {
-    const data = watchlistStore.load();
-    return {
-      total:            (data.keywords || []).length,
-      enabled:          (data.keywords || []).filter(k => k.enabled).length,
-      lastRunAt:        data.lastRunAt,
-      totalAutoUploaded: data.totalAutoUploaded || 0,
-    };
-  }
-}
-
-// ── Lazy-load helpers to avoid circular require ─────────────────
-function getHelpers() {
-  // extractTikTokVideoId + isDuplicateTikTok duplicated here to avoid
-  // importing the entire tiktok route (which has side effects)
-  function extractTikTokVideoId(url) {
-    if (!url) return null;
-    const m = url.match(/\/(video|photo)\/(\d+)/);
-    if (m) return m[2];
-    const s = url.match(/\/([A-Za-z0-9]+)\/?$/);
-    return s ? s[1] : null;
-  }
-
-  function isDuplicateTikTok(videoUrl, videoId, allUploads) {
-    for (const r of allUploads) {
-      if (r.source_url && r.source_url === videoUrl) return { duplicate: true, record: r };
-      if (r.source_url && videoId) {
-        const eid = extractTikTokVideoId(r.source_url);
-        if (eid && eid === videoId) return { duplicate: true, record: r };
-      }
-      if (r.tiktok_video_id && r.tiktok_video_id === videoId) return { duplicate: true, record: r };
-    }
-    return { duplicate: false };
-  }
-
-  return { extractTikTokVideoId, isDuplicateTikTok };
+  // เรียกจาก scheduler เมื่อ download ล้มเหลว
+  notifyDlError() { this._dlError(); }
 }
 
 module.exports = new WatchlistService();
