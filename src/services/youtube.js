@@ -99,8 +99,9 @@ class YouTubeService {
     if (!this.oauth2Client) {
       const cred = this.credentials.installed || this.credentials.web;
       // Support cloud deploy: use APP_URL env var if set, otherwise fallback to client_secret URIs
-      const appUrl = process.env.APP_URL ||
-        (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
+      const appUrl = process.env.APP_URL || process.env.RAILWAY_PUBLIC_DOMAIN
+        ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+        : null;
       const redirectUri = appUrl
         ? `${appUrl}/oauth2callback`
         : (cred.redirect_uris && cred.redirect_uris[0]) || 'http://localhost:3000/oauth2callback';
@@ -490,16 +491,6 @@ class YouTubeService {
    */
   previewRotation(count) {
     return quotaRotator.preview(count);
-  }
-
-  /**
-   * Reset cached credentials — เรียกหลัง setup wizard บันทึก client_secret.json ใหม่
-   */
-  resetCredentials() {
-    this.credentials = null;
-    this.oauth2Client = null;
-    this.oauth2Clients.clear();
-    logger.info('Credentials cache cleared');
   }
 }
 
