@@ -1,9 +1,25 @@
 node_modules/
-data/
+
+# Data files — persistent on server, ignored in git
+data/*.json
+data/browser-session/
+
+# Media files
 uploads/
 downloads/
+
+# Logs
 logs/
+
+# Google OAuth secrets — NEVER commit these
 client_secret.json
 client_secret_*.json
 token.json
+tokens/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Env
+.env
