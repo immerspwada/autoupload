@@ -503,14 +503,14 @@ function renderResults(filtered = results) {
       </div>
       <div class="tiktok-video-actions">
         ${v.alreadyUploaded
-          ?`<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">💾 Save</button>
-            <a href="${v.youtubeUrl}" target="_blank" class="btn btn-secondary btn-sm">🔗 YouTube</a>`
+          ? `<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">Save</button>
+             <a href="${v.youtubeUrl}" target="_blank" class="btn btn-secondary btn-sm">ดู YouTube</a>`
           : v.monetizationStatus === 'blocked'
-          ? `<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">💾 Save</button>
-             <button class="btn btn-error btn-sm" disabled>❌ บล็อก</button>`
-          :`<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">💾 Save</button>
-            <button class="btn btn-secondary btn-sm" onclick="window.tiktokPage.seoPreview(${realIdx})">SEO Plan</button>
-            <button class="btn btn-primary btn-sm" onclick="window.tiktokPage.dlUp(${realIdx})">🚀 อัป YouTube</button>`}
+          ? `<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">Save</button>
+             <button class="btn btn-error btn-sm" disabled>บล็อก</button>`
+          : `<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">Save</button>
+             <button class="btn btn-secondary btn-sm" onclick="window.tiktokPage.seoPreview(${realIdx})">SEO Plan</button>
+             <button class="btn btn-primary btn-sm" onclick="window.tiktokPage.dlUp(${realIdx})">อัป YouTube</button>`}
       </div>
     </div>`;
   }).join('');
@@ -700,7 +700,7 @@ async function _downloadFileToBrowser(videoUrl, suggestedFilename, btnEl) {
   } finally {
     if (btnEl) {
       btnEl.disabled = false;
-      btnEl.textContent = '💾 Save';
+      btnEl.textContent = 'Save';
     }
   }
 }
@@ -789,8 +789,8 @@ async function batchSaveToComputer() {
     if (done + failed < selected.length) await new Promise(r => setTimeout(r, 1500));
   }
 
-  if (btn) { btn.disabled = false; btn.textContent = '💾 Save ที่เลือก'; }
-  window.app.showToast(`💾 Save สำเร็จ ${done} ไฟล์${failed > 0 ? ` (ล้มเหลว ${failed})` : ''}`, done > 0 ? 'success' : 'error');
+  if (btn) { btn.disabled = false; btn.textContent = 'Save ที่เลือก'; }
+  window.app.showToast(`Save สำเร็จ ${done} ไฟล์${failed > 0 ? ` (ล้มเหลว ${failed})` : ''}`, done > 0 ? 'success' : 'error');
 }
 
 async function dlUpUrl() {
@@ -807,7 +807,7 @@ async function dlUpUrl() {
   } catch(err) {
     window.app.showToast('Network error: ' + err.message, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🚀 โหลด+อัป YouTube'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'โหลด+อัป YouTube'; }
   }
 }
 
@@ -830,11 +830,11 @@ async function dlUpSingle(idx) {
       applyFilters();
     } else {
       window.app.showToast(d.error || 'เกิดข้อผิดพลาด', 'error');
-      if (btn) { btn.disabled = false; btn.textContent = '🚀 อัป YouTube'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'อัป YouTube'; }
     }
   } catch(err) {
     window.app.showToast('Network error: ' + err.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '🚀 อัป YouTube'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'อัป YouTube'; }
   }
 }
 

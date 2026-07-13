@@ -113,7 +113,9 @@ export async function init() {
     if (s.deleteAfterUpload)  document.getElementById('deleteAfterUpload').checked = s.deleteAfterUpload === 'true' || s.deleteAfterUpload === true;
     if (s.defaultDescription) document.getElementById('defaultDescription').value = s.defaultDescription;
     if (s.defaultTags)        document.getElementById('defaultTags').value = s.defaultTags;
-  } catch(e) {}
+  } catch(e) {
+    console.warn('Settings load failed:', e.message);
+  }
 
   document.getElementById('settings-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -204,16 +206,18 @@ async function loadSchedulerConfig() {
     } else {
       banner.style.display = 'none';
     }
-  } catch(e) {}
+  } catch(e) {
+    console.warn('Scheduler config load failed:', e.message);
+  }
 }
 
 async function loadQuotaDetail() {
   const box = document.getElementById('quota-detail');
   try {
     const q = await (await fetch('/api/quota/status')).json();
-    const pct     = q.percentUsed || 0;
-    const barPct  = Math.min(100, pct);
-    const barColor = pct >= 90 ? 'var(--error)' : pct >= 70 ? 'var(--warning)' : 'var(--success)';
+    const pct    = q.percentUsed || 0;
+    const barPct = Math.min(100, pct);
+    const tier   = pct >= 90 ? 'critical' : pct >= 70 ? 'warning' : 'ok';
     const resetStr = q.nextReset
       ? new Date(q.nextReset).toLocaleString('th-TH', { timeZone:'Asia/Bangkok', hour:'2-digit', minute:'2-digit' })
       : '—';
@@ -221,10 +225,10 @@ async function loadQuotaDetail() {
     box.innerHTML = `
       <div class="quota-bar-header">
         <span>${(q.used||0).toLocaleString()} / ${(q.limit||10000).toLocaleString()} units</span>
-        <span class="quota-remaining-label" style="color:${barColor}">${q.uploadsRemaining ?? 0} uploads เหลือ</span>
+        <span class="quota-remaining-label quota-tier-${tier}">${q.uploadsRemaining ?? 0} uploads เหลือ</span>
       </div>
       <div class="quota-track">
-        <div class="quota-track-fill" style="width:${barPct}%;background:${barColor}"></div>
+        <div class="quota-track-fill quota-tier-${tier}" style="width:${barPct}%"></div>
       </div>
       <div class="quota-meta">
         <span>${pct.toFixed(1)}% ใช้แล้ว</span>

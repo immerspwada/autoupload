@@ -1,6 +1,10 @@
 // Page: Dashboard (/dashboard)
 export function render() {
   return `
+    <div class="page-header">
+      <h2>Dashboard</h2>
+      <p>ภาพรวมการอัปโหลดและสถานะระบบ</p>
+    </div>
     <div class="dashboard-grid">
       <div class="stat-card">
         <div class="stat-icon">↑</div>
@@ -48,7 +52,7 @@ export function render() {
       <div class="dashboard-section" style="grid-column: 1 / -1;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <h3>กิจกรรมล่าสุด</h3>
-          <a href="#/activity" style="color:var(--accent);text-decoration:none;font-size:0.8rem;">ดูทั้งหมด →</a>
+          <a href="#/activity" class="dashboard-see-all">ดูทั้งหมด →</a>
         </div>
         <div id="dashboard-activity" class="activity-compact"></div>
       </div>
@@ -198,8 +202,9 @@ function getActivityIcon(type, level) {
 // ★ NEW: Show quota warning banner
 let quotaWarningShown = false;
 function showQuotaWarning(quota) {
-  if (quotaWarningShown) return; // แสดงครั้งเดียว
+  if (quotaWarningShown || window._dashboardQuotaWarningShown) return;
   quotaWarningShown = true;
+  window._dashboardQuotaWarningShown = true;
 
   const banner = document.createElement('div');
   banner.className = 'quota-warning-banner';
@@ -241,7 +246,7 @@ function showQuotaWarning(quota) {
     ">
       ขอ Extended Quota →
     </button>
-    <button onclick="this.parentElement.remove(); quotaWarningShown = false;" style="
+    <button onclick="this.parentElement.remove(); window._dashboardQuotaWarningShown = false;" style="
       background: transparent;
       color: var(--text-muted);
       border: 1px solid var(--border);

@@ -3084,3 +3084,24 @@ kbd {
   color: var(--accent);
   text-decoration: underline;
 }
+
+/* quota tier colours (replaces inline color: var(--x)) */
+.quota-tier-ok       { color: var(--success); background: var(--success); }
+.quota-tier-warning  { color: var(--warning); background: var(--warning); }
+.quota-tier-critical { color: var(--error);   background: var(--error);   }
+/* background only for the fill bar */
+.quota-track-fill.quota-tier-ok       { background: var(--success); }
+.quota-track-fill.quota-tier-warning  { background: var(--warning); }
+.quota-track-fill.quota-tier-critical { background: var(--error); }
+/* text only for the label */
+.quota-remaining-label.quota-tier-ok       { color: var(--success); }
+.quota-remaining-label.quota-tier-warning  { color: var(--warning); }
+.quota-remaining-label.quota-tier-critical { color: var(--error); }
+
+/* dashboard "see all" link */
+.dashboard-see-all {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+.dashboard-see-all:hover { text-decoration: underline; }
