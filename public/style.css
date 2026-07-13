@@ -3074,3 +3074,13 @@ kbd {
   margin-bottom: 16px;
   flex-wrap: wrap;
 }
+
+/* TikTok source link in video card title */
+.tiktok-source-link {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.tiktok-source-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}

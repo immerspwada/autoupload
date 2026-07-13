@@ -488,7 +488,9 @@ function renderResults(filtered = results) {
           ${opportunity.intent ? `<span class="intent-pill">${window.app.escapeHtml(opportunity.intent)}</span>` : ''}
           ${v.matchedKeywords?.length ? `<span class="matched-keywords">${v.matchedKeywords.map(k => window.app.escapeHtml(k)).join(', ')}</span>` : ''}
         </div>
-        <div class="tiktok-video-title">${window.app.escapeHtml((v.desc||'').substring(0,100))}</div>
+        <div class="tiktok-video-title">
+          <a href="${window.app.escapeHtml(v.videoUrl)}" target="_blank" rel="noopener" class="tiktok-source-link" title="ดูต้นทางบน TikTok">${window.app.escapeHtml((v.desc||'').substring(0,100))}</a>
+        </div>
         ${opportunity.angle ? `<div class="opportunity-angle">${window.app.escapeHtml(opportunity.angle)}</div>` : ''}
         <div class="tiktok-video-meta">
           <span>@${window.app.escapeHtml(v.author)}</span>
