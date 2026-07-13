@@ -2578,3 +2578,82 @@ kbd {
     grid-template-columns: 1fr;
   }
 }
+
+/* ══════════════════════════════════════════════════════════
+   Scheduler / Settings extras
+   ══════════════════════════════════════════════════════════ */
+
+/* Toggle switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 26px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-tertiary, #374151);
+  border-radius: 26px;
+  transition: background 0.2s;
+}
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.toggle-switch input:checked + .toggle-slider { background: var(--accent, #3b82f6); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(22px); }
+
+/* Quota pause banner */
+.quota-pause-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.3);
+  color: #f87171;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* Scheduler grid */
+.scheduler-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 600px) { .scheduler-grid { grid-template-columns: 1fr; } }
+
+/* Quota detail box */
+.quota-detail-box {
+  background: var(--bg-tertiary, #1f2937);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.quota-warning-msg {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.3);
+  border-radius: 6px;
+  color: #f87171;
+  font-size: 12px;
+}
+
+/* Quota guide content */
+.quota-guide-content { font-size: 13px; }
+
+/* Settings form card spacing */
+.settings-form.card { padding: 20px; }
