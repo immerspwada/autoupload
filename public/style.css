@@ -3074,3 +3074,59 @@ kbd {
   margin-bottom: 16px;
   flex-wrap: wrap;
 }
+
+/* ══════════════════════════════════════════════════════════
+   Setup Wizard
+   ══════════════════════════════════════════════════════════ */
+.setup-page { display: flex; flex-direction: column; gap: 16px; max-width: 640px; margin: 0 auto; }
+
+.setup-hero { text-align: center; padding: 24px 0 8px; }
+.setup-hero h1 { font-size: 1.3rem; font-weight: 700; color: var(--text-primary); margin: 0 0 8px; }
+.setup-hero p  { font-size: 0.88rem; color: var(--text-muted); }
+
+.setup-card {
+  display: flex;
+  gap: 16px;
+  padding: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.setup-step-badge {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.setup-step-content { flex: 1; min-width: 0; }
+.setup-step-content h3 { font-size: 0.95rem; font-weight: 650; margin: 0 0 4px; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+.setup-step-content .section-desc { margin: 0 0 14px; }
+
+.setup-divider {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 16px 0 8px;
+  position: relative;
+}
+.setup-divider::before, .setup-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 30%;
+  height: 1px;
+  background: var(--border);
+}
+.setup-divider::before { left: 0; }
+.setup-divider::after  { right: 0; }

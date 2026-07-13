@@ -100,6 +100,23 @@ export function render() {
           <div id="quota-guide-box" style="display:none;margin-top:16px"></div>
         </div>
       </div>
+
+      <!-- Export / Share -->
+      <div class="card settings-card">
+        <div class="card-header">
+          <h3>Export / Share Config</h3>
+        </div>
+        <div class="card-body">
+          <p class="section-desc" style="margin-bottom:14px">
+            Export settings, keywords, scheduler config เป็น JSON — แล้ว Import ใน instance ใหม่ได้ทันที<br>
+            (ไม่รวม OAuth token และ client secret — ต้อง login ใหม่ทุก instance)
+          </p>
+          <div class="btn-row">
+            <button class="btn btn-secondary" id="btn-export-config">Download config.json</button>
+            <button class="btn btn-secondary" onclick="window.app.navigate('/setup')">Setup Wizard</button>
+          </div>
+        </div>
+      </div>
     </div>`;
 }
 
@@ -175,6 +192,20 @@ export async function init() {
     } catch(e) {
       box.innerHTML = '<p class="section-desc">โหลดไม่ได้</p>';
       box.style.display = 'block';
+    }
+  });
+
+  // Export config
+  document.getElementById('btn-export-config').addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/setup/export');
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'autoupload-config.json'; a.click();
+      URL.revokeObjectURL(url);
+    } catch(e) {
+      window.app.showToast('Export ล้มเหลว', 'error');
     }
   });
 }

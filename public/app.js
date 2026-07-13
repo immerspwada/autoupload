@@ -11,7 +11,8 @@ const ROUTES = {
   '/accounts':  () => import('./pages/accounts.js?v=1'),
   '/seo':       () => import('./pages/seo.js?v=2'),
   '/activity':  () => import('./pages/activity.js?v=2'),
-  '/settings':  () => import('./pages/settings.js?v=2'),
+  '/settings':  () => import('./pages/settings.js?v=3'),
+  '/setup':     () => import('./pages/setup.js?v=1'),
 };
 
 let ws = null;
