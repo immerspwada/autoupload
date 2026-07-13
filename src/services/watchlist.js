@@ -9,6 +9,7 @@
  *     → filter virality → filter duplicate → YouTube upload queue
  */
 const path = require('path');
+const { EventEmitter } = require('events');
 const logger = require('../utils/logger');
 const { Store } = require('../utils/store');
 
@@ -41,8 +42,33 @@ function makeId() {
 }
 
 // ── Public API ───────────────────────────────────────────────────
-class WatchlistService {
-  // ── CRUD ───────────────────────────────────────────────────────
+class WatchlistService extends EventEmitter {
+  constructor() {
+    super();
+    // Live run state — SSE clients + frontend poll this
+    this.runState = {
+      running:        false,
+      startedAt:      null,
+      phase:          'idle',
+      currentKeyword: null,
+      keywordIndex:   0,
+      keywordTotal:   0,
+      steps:          [],
+      summary:        null,
+    };
+  }
+
+  // Push a step to live log and emit to SSE listeners
+  _step(type, message, extra = {}) {
+    const step = { type, message, ts: Date.now(), ...extra };
+    this.runState.steps.push(step);
+    if (this.runState.steps.length > 100) this.runState.steps.shift();
+    this.emit('progress', { ...this.runState, lastStep: step });
+  }
+
+  getRunState() {
+    return { ...this.runState };
+  }
 
   getAll() {
     return watchlistStore.load().keywords || [];
@@ -104,15 +130,31 @@ class WatchlistService {
    * Returns summary { queued, skipped, keywords }
    */
   async runAll(uploadCallback) {
-    const data = watchlistStore.load();
+    const data    = watchlistStore.load();
     const enabled = (data.keywords || []).filter(k => k.enabled);
 
+    // ── Reset run state ──────────────────────────────────────────
+    this.runState = {
+      running:        true,
+      startedAt:      new Date().toISOString(),
+      phase:          'starting',
+      currentKeyword: null,
+      keywordIndex:   0,
+      keywordTotal:   enabled.length,
+      steps:          [],
+      summary:        null,
+    };
+    this.emit('progress', this.runState);
+
     if (enabled.length === 0) {
-      logger.debug('[Watchlist] No enabled keywords — skipping');
+      this._step('info', 'ไม่มี keyword ที่เปิดใช้งาน — ข้าม');
+      this.runState.running = false;
+      this.runState.phase   = 'done';
+      this.emit('progress', this.runState);
       return { queued: 0, skipped: 0, keywords: [] };
     }
 
-    logger.info('[Watchlist] Starting auto-run', { keywords: enabled.map(k => k.keyword) });
+    this._step('start', `เริ่มต้น — ${enabled.length} keywords`);
 
     const tiktokService  = require('./tiktok');
     const seoService     = require('./seo');
@@ -123,56 +165,82 @@ class WatchlistService {
     let totalSkipped = 0;
     const summary    = [];
 
-    for (const kw of enabled) {
+    for (let i = 0; i < enabled.length; i++) {
+      const kw = enabled[i];
+      this.runState.keywordIndex   = i + 1;
+      this.runState.currentKeyword = kw.keyword;
+      this.runState.phase          = 'searching';
+      this._step('search', `🔍 กำลังค้นหา "${kw.keyword}"...`, { keyword: kw.keyword });
+
       try {
         const videos = await tiktokService.searchVideos(kw.keyword, kw.countPerRun);
-        let kwQueued = 0;
+        this._step('found', `พบ ${videos.length} คลิปจาก "${kw.keyword}"`, { count: videos.length });
+
+        this.runState.phase = 'filtering';
+        let kwQueued  = 0;
+        let kwSkipped = 0;
 
         for (const video of videos) {
-          // 1. Duplicate check
+          // duplicate check
           const vidId = extractTikTokVideoId(video.videoUrl);
           const dup   = isDuplicateTikTok(video.videoUrl, vidId, uploads.load());
-          if (dup.duplicate) { totalSkipped++; continue; }
+          if (dup.duplicate) {
+            kwSkipped++;
+            this._step('skip', `ข้าม (อัปแล้ว): ${(video.desc || '').substring(0, 40)}`, { reason: 'duplicate' });
+            totalSkipped++;
+            continue;
+          }
 
-          // 2. Virality / opportunity score check
+          // virality / score check
           const virality   = seoService.calculateViralityScore(video);
           const validation = seoService.validateForMonetization(video, video.desc || '');
-          if (validation.status === 'blocked') { totalSkipped++; continue; }
+          if (validation.status === 'blocked') {
+            kwSkipped++;
+            this._step('skip', `ข้าม (บล็อก): ${(video.desc || '').substring(0, 40)}`, { reason: 'blocked' });
+            totalSkipped++;
+            continue;
+          }
 
           const opportunity = seoService.analyzeOpportunity(
-            { ...video, virality, validation },
-            { alreadyUploaded: false }
+            { ...video, virality, validation }, { alreadyUploaded: false }
           );
           const score = opportunity?.score ?? virality?.score ?? 0;
-          if (score < kw.minScore) { totalSkipped++; continue; }
+          if (score < kw.minScore) {
+            kwSkipped++;
+            this._step('skip', `ข้าม (score ${score} < ${kw.minScore}): ${(video.desc || '').substring(0, 40)}`, { reason: 'low_score', score });
+            totalSkipped++;
+            continue;
+          }
 
-          // 3. Queue for upload
-          await uploadCallback({
-            video:    { ...video, virality, validation, opportunity },
-            keyword:  kw.keyword,
-            watchId:  kw.id,
-          });
+          // Queue
+          this.runState.phase = 'uploading';
+          this._step('queue', `✓ เพิ่มคิว (score ${score}): ${(video.desc || '').substring(0, 50)}`, { score });
+          await uploadCallback({ video: { ...video, virality, validation, opportunity }, keyword: kw.keyword, watchId: kw.id });
           kwQueued++;
           totalQueued++;
         }
 
-        // Update keyword stats
         this._updateStats(kw.id, { found: videos.length, queued: kwQueued });
-        summary.push({ keyword: kw.keyword, found: videos.length, queued: kwQueued });
-        logger.info('[Watchlist] Keyword done', { keyword: kw.keyword, found: videos.length, queued: kwQueued });
+        summary.push({ keyword: kw.keyword, found: videos.length, queued: kwQueued, skipped: kwSkipped });
+        this._step('done_kw', `เสร็จ "${kw.keyword}" — คิว ${kwQueued}, ข้าม ${kwSkipped}`, { kwQueued, kwSkipped });
       } catch (err) {
-        logger.error('[Watchlist] Keyword error', { keyword: kw.keyword, error: err.message });
+        this._step('error', `ข้อผิดพลาด "${kw.keyword}": ${err.message}`, { error: err.message });
         summary.push({ keyword: kw.keyword, error: err.message, queued: 0 });
       }
     }
 
-    // Update global stats
+    // Finalize
     const d = watchlistStore.load();
-    d.lastRunAt = new Date().toISOString();
-    d.totalAutoUploaded = (d.totalAutoUploaded || 0) + totalQueued;
+    d.lastRunAt          = new Date().toISOString();
+    d.totalAutoUploaded  = (d.totalAutoUploaded || 0) + totalQueued;
     watchlistStore.save(d);
 
-    logger.info('[Watchlist] Auto-run complete', { totalQueued, totalSkipped });
+    this.runState.running = false;
+    this.runState.phase   = 'done';
+    this.runState.summary = { totalQueued, totalSkipped, keywords: summary };
+    this._step('complete', `✅ รันเสร็จ — เพิ่มคิว ${totalQueued} คลิป, ข้าม ${totalSkipped}`, { totalQueued, totalSkipped });
+    this.emit('progress', this.runState);
+
     return { queued: totalQueued, skipped: totalSkipped, keywords: summary };
   }
 

@@ -123,6 +123,21 @@ export function render() {
         <div id="watchlist-list" class="watchlist-list">
           <p class="empty-state">กำลังโหลด...</p>
         </div>
+
+        <!-- Live run status panel -->
+        <div id="watchlist-run-panel" class="watchlist-run-panel" style="display:none">
+          <div class="watchlist-run-header">
+            <div class="watchlist-run-title">
+              <span class="watchlist-run-spinner" id="wl-spinner"></span>
+              <span id="wl-run-title">กำลังรัน Watchlist...</span>
+            </div>
+            <span id="wl-run-progress-text" class="watchlist-run-progress-text"></span>
+          </div>
+          <div class="watchlist-run-progress-bar">
+            <div id="wl-run-bar" class="watchlist-run-bar"></div>
+          </div>
+          <div id="wl-run-log" class="watchlist-run-log"></div>
+        </div>
       </div>
 
       <div id="tiktok-loading" class="loading-state" style="display:none;"><div class="spinner"></div><p>กำลังโหลด...</p></div>
@@ -1147,14 +1162,20 @@ function initWatchlistPanel() {
       const r = await fetch('/api/watchlist/run', { method: 'POST' });
       const d = await r.json();
       window.app.showToast(d.message || 'เริ่ม watchlist run แล้ว', d.success ? 'success' : 'error');
+      if (d.success) startWatchlistSSE();
     } catch(e) {
       window.app.showToast('เกิดข้อผิดพลาด', 'error');
-    } finally {
       btn.disabled = false; btn.textContent = 'รันตอนนี้';
     }
   });
 
   loadWatchlist();
+
+  // Connect SSE if a run is already in progress
+  fetch('/api/watchlist/state').then(r => r.json()).then(state => {
+    if (state.running) startWatchlistSSE();
+    else if (state.phase !== 'idle') renderRunPanel(state);
+  }).catch(() => {});
 }
 
 async function loadWatchlist() {
@@ -1276,3 +1297,93 @@ async function addWatchlistKeyword() {
 // Reload watchlist when switching to that tab
 const _origSwitchMode = window._switchModeRef;
 window._watchlistTabCallback = () => loadWatchlist();
+
+// ── SSE Progress ─────────────────────────────────────────────────
+let _wlSSE = null;
+
+function startWatchlistSSE() {
+  if (_wlSSE) { _wlSSE.close(); _wlSSE = null; }
+
+  _wlSSE = new EventSource('/api/watchlist/progress');
+
+  _wlSSE.onmessage = (e) => {
+    try {
+      const state = JSON.parse(e.data);
+      renderRunPanel(state);
+      if (!state.running && state.phase === 'done') {
+        // Re-enable run button + refresh keyword stats
+        const btn = document.getElementById('btn-watchlist-run');
+        if (btn) { btn.disabled = false; btn.textContent = 'รันตอนนี้'; }
+        loadWatchlist();
+        setTimeout(() => { if (_wlSSE) { _wlSSE.close(); _wlSSE = null; } }, 2000);
+      }
+    } catch(_) {}
+  };
+
+  _wlSSE.onerror = () => {
+    if (_wlSSE) { _wlSSE.close(); _wlSSE = null; }
+    const btn = document.getElementById('btn-watchlist-run');
+    if (btn) { btn.disabled = false; btn.textContent = 'รันตอนนี้'; }
+  };
+}
+
+function renderRunPanel(state) {
+  const panel = document.getElementById('watchlist-run-panel');
+  if (!panel) return;
+  panel.style.display = 'block';
+
+  // Title + spinner
+  const titleEl = document.getElementById('wl-run-title');
+  const spinner = document.getElementById('wl-spinner');
+  const progText = document.getElementById('wl-run-progress-text');
+  const bar = document.getElementById('wl-run-bar');
+
+  if (state.running) {
+    spinner.className = 'watchlist-run-spinner spinning';
+    const phaseLabel = {
+      starting:   'กำลังเริ่มต้น...',
+      searching:  `กำลังค้นหา "${state.currentKeyword}"...`,
+      filtering:  `กำลัง filter คลิปจาก "${state.currentKeyword}"...`,
+      uploading:  `กำลังเพิ่มคิวอัปโหลด...`,
+    }[state.phase] || 'กำลังดำเนินการ...';
+    titleEl.textContent = phaseLabel;
+    // Progress bar
+    const pct = state.keywordTotal > 0
+      ? Math.round(((state.keywordIndex - 1) / state.keywordTotal) * 100)
+      : 0;
+    bar.style.width = `${pct}%`;
+    progText.textContent = state.keywordTotal > 0
+      ? `${state.keywordIndex}/${state.keywordTotal} keywords`
+      : '';
+  } else if (state.phase === 'done' && state.summary) {
+    spinner.className = 'watchlist-run-spinner done';
+    titleEl.textContent = `เสร็จแล้ว — เพิ่มคิว ${state.summary.totalQueued} คลิป`;
+    bar.style.width = '100%';
+    bar.classList.add('done');
+    progText.textContent = `ข้าม ${state.summary.totalSkipped} คลิป`;
+  }
+
+  // Live log — show last 12 steps
+  const logEl = document.getElementById('wl-run-log');
+  const steps = (state.steps || []).slice(-12);
+  logEl.innerHTML = steps.map(s => {
+    const cls = {
+      error:     'log-error',
+      skip:      'log-skip',
+      queue:     'log-queue',
+      complete:  'log-done',
+      done_kw:   'log-done',
+      search:    'log-search',
+      found:     'log-found',
+      start:     'log-info',
+      info:      'log-info',
+    }[s.type] || 'log-info';
+    const time = new Date(s.ts).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return `<div class="wl-log-line ${cls}">
+      <span class="wl-log-time">${time}</span>
+      <span class="wl-log-msg">${window.app.escapeHtml(s.message)}</span>
+    </div>`;
+  }).join('');
+  // Auto-scroll to bottom
+  logEl.scrollTop = logEl.scrollHeight;
+}

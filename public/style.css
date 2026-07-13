@@ -3194,3 +3194,106 @@ kbd {
   margin-top: 2px;
   display: block;
 }
+
+/* ══════════════════════════════════════════════════════════
+   Watchlist Run Progress Panel
+   ══════════════════════════════════════════════════════════ */
+.watchlist-run-panel {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.watchlist-run-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+  gap: 12px;
+}
+
+.watchlist-run-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.watchlist-run-progress-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Spinner */
+.watchlist-run-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+}
+.watchlist-run-spinner.spinning {
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+}
+.watchlist-run-spinner.done {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+/* Progress bar */
+.watchlist-run-progress-bar {
+  height: 4px;
+  background: var(--border);
+  margin: 0 14px 10px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.watchlist-run-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.watchlist-run-bar.done { background: var(--success); }
+
+/* Log */
+.watchlist-run-log {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 0 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.75rem;
+}
+.watchlist-run-log::-webkit-scrollbar { width: 3px; }
+.watchlist-run-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.wl-log-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.4;
+}
+.wl-log-line:last-child { border-bottom: none; }
+
+.wl-log-time { color: var(--text-muted); flex-shrink: 0; font-size: 0.7rem; }
+.wl-log-msg  { flex: 1; color: var(--text-secondary); }
+
+/* Log type colours */
+.log-error  .wl-log-msg { color: var(--error); }
+.log-skip   .wl-log-msg { color: var(--text-muted); text-decoration: line-through; }
+.log-queue  .wl-log-msg { color: var(--success); font-weight: 500; }
+.log-done   .wl-log-msg { color: var(--success); }
+.log-search .wl-log-msg { color: var(--info); }
+.log-found  .wl-log-msg { color: var(--text-primary); }
+.log-info   .wl-log-msg { color: var(--text-secondary); }
