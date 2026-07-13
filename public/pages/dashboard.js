@@ -3,7 +3,7 @@ export function render() {
   return `
     <div class="dashboard-grid">
       <div class="stat-card">
-        <div class="stat-icon">UP</div>
+        <div class="stat-icon">↑</div>
         <div class="stat-value" id="stat-total-uploads">0</div>
         <div class="stat-label">อัปโหลดทั้งหมด</div>
       </div>
@@ -183,18 +183,16 @@ async function renderRecentActivity() {
 }
 
 function getActivityIcon(type, level) {
-  if (level === 'success') return 'OK';
-  if (level === 'error') return 'ERR';
+  if (level === 'success') return '✓';
+  if (level === 'error')   return '✕';
   if (level === 'warning') return '!';
-  
-  if (type.startsWith('upload')) return 'UP';
-  if (type.startsWith('tiktok')) return 'TT';
-  if (type.startsWith('queue')) return 'Q';
+  if (type.startsWith('upload'))    return '↑';
+  if (type.startsWith('tiktok'))    return 'TT';
+  if (type.startsWith('queue'))     return 'Q';
   if (type.startsWith('scheduler')) return 'S';
-  if (type.startsWith('auth')) return 'A';
-  if (type.startsWith('health')) return 'H';
-  
-  return 'I';
+  if (type.startsWith('auth'))      return 'A';
+  if (type.startsWith('health'))    return 'H';
+  return 'i';
 }
 
 // ★ NEW: Show quota warning banner

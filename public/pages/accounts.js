@@ -9,60 +9,52 @@ let rotationStatus = null;
 
 export function render() {
   return `
-    <div class="accounts-page" style="max-width: 1000px; margin: 0 auto;">
+    <div class="accounts-page">
       <div class="page-header">
         <h2>Account Management</h2>
-        <p class="subtitle">จัดการหลาย YouTube accounts พร้อมสลับกันใช้งาน</p>
+        <p>จัดการหลาย YouTube accounts พร้อมสลับกันใช้งานอัตโนมัติ</p>
       </div>
 
-      <div class="card" style="margin-bottom: 20px; border-color: var(--primary);">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
           <h3>Quota Rotation Status</h3>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm btn-secondary" onclick="refreshRotationStatus()">Refresh</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-sm btn-secondary" onclick="refreshRotationStatus()">รีเฟรช</button>
             <button class="btn btn-sm btn-primary" onclick="forceRotate()">Force Rotate</button>
           </div>
         </div>
         <div class="card-body">
-          <div id="rotation-summary">
-            ${renderRotationSummary()}
-          </div>
-          <div id="rotation-log" style="margin-top:16px;">
-            ${renderRotationLog()}
-          </div>
+          <div id="rotation-summary">${renderRotationSummary()}</div>
+          <div id="rotation-log" style="margin-top:16px">${renderRotationLog()}</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <h3>Accounts (${accounts.length})</h3>
+          <button class="btn btn-primary btn-sm" onclick="showAddAccountModal()">+ เพิ่ม Account</button>
+        </div>
+        <div class="card-body">
+          <div id="accounts-list">${renderAccountsList()}</div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-          <h3>Accounts (${accounts.length})</h3>
-          <button class="btn btn-primary" onclick="showAddAccountModal()">
-            เพิ่ม Account
-          </button>
-        </div>
-        <div class="card-body">
-          <div id="accounts-list">
-            ${renderAccountsList()}
-          </div>
-        </div>
-      </div>
-
-      <div class="card" style="margin-top: 20px;">
         <div class="card-header">
           <h3>วิธีเพิ่ม Quota — สร้าง Google Cloud Project ใหม่</h3>
         </div>
         <div class="card-body">
-          <div style="padding:12px;background:var(--success-bg);border-radius:8px;margin-bottom:16px;">
+          <div class="tip-box success">
             <strong>แต่ละ Google Cloud Project = 10,000 units/day = 6 uploads/day</strong><br>
             สร้าง 3 Projects = 18 uploads/day &nbsp;|&nbsp; สร้าง 10 Projects = 60 uploads/day
           </div>
-          <ol style="line-height: 2.2;">
-            <li>ไปที่ <a href="https://console.cloud.google.com" target="_blank" style="color:var(--primary);">console.cloud.google.com</a> → สร้าง <strong>New Project</strong></li>
+          <ol class="howto-list">
+            <li>ไปที่ <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> → สร้าง <strong>New Project</strong></li>
             <li>เปิดใช้ <strong>YouTube Data API v3</strong> (APIs & Services → Enable APIs)</li>
             <li>สร้าง <strong>OAuth 2.0 Client ID</strong> (Credentials → Create Credentials)</li>
             <li>เพิ่ม Redirect URI: <code>http://localhost:3000/oauth2callback</code></li>
             <li>คัดลอก <strong>Client ID</strong> และ <strong>Client Secret</strong></li>
-            <li>กด "เพิ่ม Account" ด้านบน แล้ววางข้อมูล</li>
+            <li>กด "+ เพิ่ม Account" ด้านบน แล้ววางข้อมูล</li>
             <li>กด "Login" เพื่อ authorize กับ YouTube</li>
             <li>ระบบจะ <strong>rotate อัตโนมัติ</strong> เมื่อ quota account ปัจจุบันหมด</li>
           </ol>
@@ -94,44 +86,6 @@ export function render() {
         </form>
       </div>
     </div>
-
-    <style>
-      .accounts-list { display: flex; flex-direction: column; gap: 15px; }
-      .account-card { padding: 20px; border: 2px solid var(--border); border-radius: 12px; transition: all 0.3s; }
-      .account-card.active { border-color: var(--success); background: var(--success-bg); }
-      .account-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-      .account-name { font-size: 1.2rem; font-weight: 600; display: flex; align-items: center; gap: 10px; }
-      .account-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px; }
-      .info-item { display: flex; flex-direction: column; gap: 5px; }
-      .info-label { font-size: 0.875rem; color: var(--text-secondary); }
-      .info-value { font-weight: 600; }
-      .account-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-      .quota-bar { width: 100%; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin-top: 5px; }
-      .quota-fill { height: 100%; background: var(--primary); transition: width 0.3s; }
-      .quota-fill.high { background: var(--warning); }
-      .quota-fill.critical { background: var(--error); }
-      .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-      .modal-content { background: var(--background); padding: 30px; border-radius: 12px; max-width: 500px; width: 90%; }
-      .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
-      .form-group { margin-bottom: 20px; }
-      .form-group label { display: block; margin-bottom: 8px; font-weight: 600; }
-      .form-control { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
-      .rotation-accounts { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-      .rotation-account-badge { padding: 8px 14px; border-radius: 20px; font-size: 0.875rem; font-weight: 600; border: 2px solid transparent; }
-      .rotation-account-badge.ok { background: var(--success-bg); border-color: var(--success); }
-      .rotation-account-badge.warning { background: var(--warning-bg); border-color: var(--warning); }
-      .rotation-account-badge.critical { background: rgba(239,68,68,0.1); border-color: var(--error); }
-      .rotation-account-badge.active-now { box-shadow: 0 0 0 3px var(--primary); }
-      .rotation-log-item { padding: 8px 12px; border-left: 3px solid var(--primary); margin-bottom: 6px; font-size: 0.875rem; background: var(--surface); border-radius: 0 6px 6px 0; }
-      .total-quota-bar { height: 12px; background: var(--border); border-radius: 6px; overflow: hidden; margin: 8px 0; }
-      .total-quota-fill { height: 100%; background: linear-gradient(90deg, var(--success), var(--primary)); transition: width 0.5s; }
-      .smart-recommendation { display:flex; gap:12px; align-items:flex-start; padding:12px 14px; border-radius:8px; margin-bottom:14px; background:var(--surface); border:1px solid var(--border); }
-      .smart-recommendation.critical { border-color:var(--error); background:rgba(239,68,68,0.08); }
-      .smart-recommendation.ready { border-color:var(--success); background:var(--success-bg); }
-      .smart-recommendation-icon { font-size:1.4rem; line-height:1; }
-      .smart-recommendation-text { font-weight:600; }
-      .smart-recommendation-sub { color:var(--text-secondary); font-size:0.82rem; margin-top:4px; }
-    </style>
   `;
 }
 
@@ -148,7 +102,7 @@ function renderRotationSummary() {
 
   return `
     <div class="smart-recommendation ${ready ? 'ready' : 'critical'}">
-      <div class="smart-recommendation-icon">${ready ? 'OK' : '!'}</div>
+      <div class="smart-recommendation-icon">${ready ? '✓' : '!'}</div>
       <div>
         <div class="smart-recommendation-text">${window.app.escapeHtml(summary.recommendation || 'กำลังประเมิน quota...')}</div>
         <div class="smart-recommendation-sub">
@@ -159,60 +113,56 @@ function renderRotationSummary() {
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px;">
-      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:8px;">
-        <div style="font-size:1.8rem;font-weight:700;color:var(--primary);">${summary.totalUploadsLeft}</div>
-        <div style="font-size:0.8rem;color:var(--text-secondary);">Total Uploads Left</div>
+    <div class="stat-mini-grid">
+      <div class="stat-mini">
+        <div class="stat-mini-value">${summary.totalUploadsLeft}</div>
+        <div class="stat-mini-label">Uploads Left</div>
       </div>
-      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:8px;">
-        <div style="font-size:1.8rem;font-weight:700;color:var(--success);">${summary.authenticatedAccounts}</div>
-        <div style="font-size:0.8rem;color:var(--text-secondary);">Active Accounts</div>
+      <div class="stat-mini">
+        <div class="stat-mini-value">${summary.authenticatedAccounts}</div>
+        <div class="stat-mini-label">Active Accounts</div>
       </div>
-      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:8px;">
-        <div style="font-size:1.8rem;font-weight:700;">${summary.totalQuotaRemaining.toLocaleString()}</div>
-        <div style="font-size:0.8rem;color:var(--text-secondary);">Units Remaining</div>
+      <div class="stat-mini">
+        <div class="stat-mini-value">${summary.totalQuotaRemaining.toLocaleString()}</div>
+        <div class="stat-mini-label">Units Remaining</div>
       </div>
-      <div style="text-align:center;padding:12px;background:var(--surface);border-radius:8px;">
-        <div style="font-size:1.8rem;font-weight:700;color:var(--warning);">${totalPct}%</div>
-        <div style="font-size:0.8rem;color:var(--text-secondary);">Total Used</div>
+      <div class="stat-mini">
+        <div class="stat-mini-value">${totalPct}%</div>
+        <div class="stat-mini-label">Total Used</div>
       </div>
     </div>
 
-    <div style="margin-bottom:8px;font-size:0.875rem;color:var(--text-secondary);">Quota รวมทุก account</div>
+    <p class="section-desc" style="margin-bottom:6px">Quota รวมทุก account</p>
     <div class="total-quota-bar">
-      <div class="total-quota-fill" style="width:${100 - totalPct}%;"></div>
+      <div class="total-quota-fill" style="width:${100 - totalPct}%"></div>
     </div>
-    <div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:16px;">${totalUsed.toLocaleString()} / ${totalLimit.toLocaleString()} units used</div>
+    <p class="section-desc" style="margin-top:4px;margin-bottom:16px">${totalUsed.toLocaleString()} / ${totalLimit.toLocaleString()} units used</p>
 
-    <div style="font-size:0.875rem;font-weight:600;margin-bottom:8px;">Per-Account Status:</div>
+    <p style="font-size:0.82rem;font-weight:600;color:var(--text-secondary);margin-bottom:8px">Per-Account Status</p>
     <div class="rotation-accounts">
       ${accs.map(acc => `
-        <div class="rotation-account-badge ${acc.status} ${acc.isActive ? 'active-now' : ''}" 
-             title="${acc.quotaUsed}/${acc.quotaLimit} units used&#10;${acc.uploadsLeft} uploads left">
-          ${acc.isActive ? 'Active · ' : ''}${acc.name}
-          ${acc.isAuthenticated ? `<br><small>${acc.uploadsLeft} uploads</small>` : '<br><small>not logged in</small>'}
+        <div class="rotation-account-badge ${acc.status} ${acc.isActive ? 'active-now' : ''}"
+             title="${acc.quotaUsed}/${acc.quotaLimit} units used — ${acc.uploadsLeft} uploads left">
+          ${acc.isActive ? '<strong>Active</strong> · ' : ''}${window.app.escapeHtml(acc.name)}
+          <br><small>${acc.isAuthenticated ? `${acc.uploadsLeft} uploads` : 'not logged in'}</small>
         </div>
       `).join('')}
     </div>
-
-    <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px;">
-      Active = account ปัจจุบัน · ok / warning / critical แสดงตาม quota usage
-    </div>
+    <p class="section-desc" style="margin-top:6px">Active = account ปัจจุบัน · ok / warning / critical แสดงตาม quota usage</p>
   `;
 }
 
 function renderRotationLog() {
   if (!rotationStatus || !rotationStatus.recentRotations?.length) {
-    return '<p style="color:var(--text-secondary);font-size:0.875rem;">ยังไม่มีประวัติการ rotate</p>';
+    return '<p class="section-desc">ยังไม่มีประวัติการ rotate</p>';
   }
-
   return `
-    <div style="font-size:0.875rem;font-weight:600;margin-bottom:8px;">ประวัติการ Rotate ล่าสุด:</div>
+    <p style="font-size:0.82rem;font-weight:600;color:var(--text-secondary);margin-bottom:8px">ประวัติการ Rotate ล่าสุด</p>
     ${rotationStatus.recentRotations.slice(0, 5).map(r => `
       <div class="rotation-log-item">
-        <strong>${r.fromAccount}</strong> → <strong>${r.toAccount}</strong>
-        <span style="color:var(--text-secondary);margin-left:8px;font-size:0.8rem;">${r.reason}</span>
-        <span style="float:right;color:var(--text-secondary);font-size:0.8rem;">${new Date(r.timestamp).toLocaleTimeString('th-TH')}</span>
+        <strong>${window.app.escapeHtml(r.fromAccount)}</strong> → <strong>${window.app.escapeHtml(r.toAccount)}</strong>
+        <span class="section-desc" style="margin-left:8px">${window.app.escapeHtml(r.reason)}</span>
+        <span class="section-desc" style="float:right">${new Date(r.timestamp).toLocaleTimeString('th-TH')}</span>
       </div>
     `).join('')}
   `;

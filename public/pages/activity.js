@@ -2,42 +2,50 @@
 export function render() {
   return `
     <div class="activity-section">
-      <div class="activity-header">
+      <div class="page-header">
         <h2>Activity Log</h2>
-        <p class="section-desc">ติดตามกิจกรรมทั้งหมดแบบ real-time</p>
-        <div class="activity-filters">
-          <select id="activity-type-filter" class="filter-select">
-            <option value="">ทั้งหมด</option>
-            <option value="upload">อัปโหลด</option>
-            <option value="tiktok">TikTok</option>
-            <option value="queue">คิว</option>
-            <option value="scheduler">Scheduler</option>
-            <option value="auth">Auth</option>
-            <option value="health">Health</option>
-          </select>
-          <select id="activity-level-filter" class="filter-select">
-            <option value="">ทุกระดับ</option>
-            <option value="success">สำเร็จ</option>
-            <option value="error">ข้อผิดพลาด</option>
-            <option value="warning">คำเตือน</option>
-            <option value="info">ข้อมูล</option>
-          </select>
-          <button id="btn-activity-refresh" class="btn btn-secondary btn-sm">รีเฟรช</button>
-          <button id="btn-activity-clear" class="btn btn-danger btn-sm">ล้างทั้งหมด</button>
+        <p>ติดตามกิจกรรมทั้งหมดแบบ real-time</p>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select id="activity-type-filter" class="filter-select">
+              <option value="">ทุกประเภท</option>
+              <option value="upload">อัปโหลด</option>
+              <option value="tiktok">TikTok</option>
+              <option value="queue">คิว</option>
+              <option value="scheduler">Scheduler</option>
+              <option value="auth">Auth</option>
+              <option value="health">Health</option>
+            </select>
+            <select id="activity-level-filter" class="filter-select">
+              <option value="">ทุกระดับ</option>
+              <option value="success">สำเร็จ</option>
+              <option value="error">ข้อผิดพลาด</option>
+              <option value="warning">คำเตือน</option>
+              <option value="info">ข้อมูล</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button id="btn-activity-refresh" class="btn btn-secondary btn-sm">รีเฟรช</button>
+            <button id="btn-activity-clear" class="btn btn-danger btn-sm">ล้างทั้งหมด</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding-bottom:0">
+          <div id="activity-stats" class="dashboard-grid" style="margin-bottom:0"></div>
         </div>
       </div>
 
-      <div id="activity-stats" class="activity-stats-grid"></div>
-      
-      <div id="activity-loading" class="loading-state" style="display:none;">
+      <div id="activity-loading" class="loading-state" style="display:none">
         <div class="spinner"></div>
         <p>กำลังโหลด...</p>
       </div>
 
       <div id="activity-timeline" class="activity-timeline"></div>
-      
+
       <div class="activity-footer">
-        <button id="btn-load-more" class="btn btn-secondary btn-sm" style="display:none;">โหลดเพิ่ม</button>
+        <button id="btn-load-more" class="btn btn-secondary btn-sm" style="display:none">โหลดเพิ่ม</button>
       </div>
     </div>
   `;
@@ -107,11 +115,10 @@ function applyFilters() {
 
 function renderStats(stats) {
   if (!stats) return;
-  
   const el = document.getElementById('activity-stats');
   el.innerHTML = `
     <div class="stat-card">
-      <div class="stat-icon">📊</div>
+      <div class="stat-icon">📋</div>
       <div class="stat-value">${stats.total || 0}</div>
       <div class="stat-label">ทั้งหมด</div>
     </div>
@@ -121,12 +128,12 @@ function renderStats(stats) {
       <div class="stat-label">วันนี้</div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon">✅</div>
+      <div class="stat-icon">✓</div>
       <div class="stat-value">${stats.byLevel?.success || 0}</div>
       <div class="stat-label">สำเร็จ</div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon">❌</div>
+      <div class="stat-icon">✕</div>
       <div class="stat-value">${stats.byLevel?.error || 0}</div>
       <div class="stat-label">ผิดพลาด</div>
     </div>
@@ -197,18 +204,16 @@ function renderActivity(activity) {
 }
 
 function getActivityIcon(type, level) {
-  if (level === 'success') return '✅';
-  if (level === 'error') return '❌';
-  if (level === 'warning') return '⚠️';
-  
-  if (type.startsWith('upload')) return '📤';
-  if (type.startsWith('tiktok')) return '🎵';
-  if (type.startsWith('queue')) return '🔄';
-  if (type.startsWith('scheduler')) return '⏰';
-  if (type.startsWith('auth')) return '🔐';
-  if (type.startsWith('health')) return '💚';
-  
-  return 'ℹ️';
+  if (level === 'success') return '✓';
+  if (level === 'error')   return '✕';
+  if (level === 'warning') return '!';
+  if (type.startsWith('upload'))    return '↑';
+  if (type.startsWith('tiktok'))    return 'TT';
+  if (type.startsWith('queue'))     return 'Q';
+  if (type.startsWith('scheduler')) return 'S';
+  if (type.startsWith('auth'))      return 'A';
+  if (type.startsWith('health'))    return 'H';
+  return 'i';
 }
 
 function formatType(type) {
@@ -226,14 +231,12 @@ function formatType(type) {
 }
 
 function formatDate(dateStr) {
-  const today = new Date().toISOString().split('T')[0];
+  const today     = new Date().toISOString().split('T')[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-  
-  if (dateStr === today) return '📅 วันนี้';
-  if (dateStr === yesterday) return '📅 เมื่อวาน';
-  
+  if (dateStr === today)     return 'วันนี้';
+  if (dateStr === yesterday) return 'เมื่อวาน';
   const date = new Date(dateStr);
-  return `📅 ${date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 async function clearActivities() {
