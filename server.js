@@ -91,6 +91,7 @@ app.use('/api/seo', seoRoutes);
 app.use('/api/quota', require('./src/routes/quota'));
 app.use('/api/activity', activityRoutes);
 app.use('/api/accounts', require('./src/routes/accounts'));
+app.use('/api/watchlist', require('./src/routes/watchlist'));
 
 // Event Bus API
 app.get('/api/events/history', (req, res) => {

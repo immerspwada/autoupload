@@ -18,6 +18,7 @@ export function render() {
         <button class="tiktok-tab active" data-mode="search">ค้นหา</button>
         <button class="tiktok-tab" data-mode="trending">Trending</button>
         <button class="tiktok-tab" data-mode="creator">Creator</button>
+        <button class="tiktok-tab" data-mode="watchlist">Watchlist ⚡</button>
       </div>
 
       <div class="tiktok-mode" id="mode-search">
@@ -68,6 +69,60 @@ export function render() {
           <button id="btn-creator" class="btn btn-primary">ดึงคลิป</button>
         </div>
         <small class="section-desc" style="margin:6px 0 0;">ใส่ @ หรือไม่ก็ได้ ระบบจะปรับให้อัตโนมัติ</small>
+      </div>
+
+      <!-- ══ Watchlist Mode ══════════════════════════════════════ -->
+      <div class="tiktok-mode" id="mode-watchlist" style="display:none;">
+        <div class="watchlist-header">
+          <div>
+            <h3>Keyword Watchlist</h3>
+            <p class="section-desc">Scheduler จะค้นหาและอัปโหลดตาม keywords เหล่านี้ทุกรอบโดยอัตโนมัติ</p>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-secondary btn-sm" id="btn-watchlist-run">รันตอนนี้</button>
+            <button class="btn btn-primary btn-sm" id="btn-watchlist-add-open">+ เพิ่ม Keyword</button>
+          </div>
+        </div>
+
+        <!-- Stats bar -->
+        <div id="watchlist-stats" class="watchlist-stats"></div>
+
+        <!-- Add keyword form (hidden by default) -->
+        <div id="watchlist-add-form" class="watchlist-add-form" style="display:none;">
+          <div class="watchlist-form-grid">
+            <div class="form-group">
+              <label>Keyword</label>
+              <input type="text" id="wl-keyword" placeholder="เช่น แมวน่ารัก, cooking tips" class="search-input">
+            </div>
+            <div class="form-group">
+              <label>คลิปต่อรอบ</label>
+              <select id="wl-count" class="sort-select">
+                <option value="4">4</option>
+                <option value="6">6</option>
+                <option value="8" selected>8</option>
+                <option value="12">12</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>คะแนนขั้นต่ำ</label>
+              <select id="wl-minscore" class="sort-select">
+                <option value="0">ทั้งหมด</option>
+                <option value="52" selected>52+ ทดสอบ</option>
+                <option value="68">68+ ดี</option>
+                <option value="82">82+ พรีเมียม</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn btn-primary btn-sm" id="btn-watchlist-save">บันทึก</button>
+            <button class="btn btn-secondary btn-sm" id="btn-watchlist-cancel">ยกเลิก</button>
+          </div>
+        </div>
+
+        <!-- Keyword list -->
+        <div id="watchlist-list" class="watchlist-list">
+          <p class="empty-state">กำลังโหลด...</p>
+        </div>
       </div>
 
       <div id="tiktok-loading" class="loading-state" style="display:none;"><div class="spinner"></div><p>กำลังโหลด...</p></div>
@@ -156,7 +211,11 @@ export function init() {
     creatorInput.addEventListener('keypress', e => { if (e.key==='Enter') fetchCreator(); });
   }
 
-  // Results controls — ใช้ flag เพื่อป้องกัน duplicate delegation listener
+  // Watchlist panel — lazy init when tab is opened
+  if (!window._watchlistInited) {
+    window._watchlistInited = true;
+    initWatchlistPanel();
+  }  // Results controls — ใช้ flag เพื่อป้องกัน duplicate delegation listener
   if (!window._tiktokDelegationAttached) {
     window._tiktokDelegationAttached = true;
     document.addEventListener('click', (e) => {
@@ -210,6 +269,8 @@ function switchMode(mode) {
   document.getElementById(`mode-${mode}`).style.display = 'block';
   document.getElementById('tiktok-results').style.display = 'none';
   document.getElementById('tiktok-batch-results').style.display = 'none';
+  // reload watchlist data when switching to that tab
+  if (mode === 'watchlist') loadWatchlist();
 }
 
 async function search() {
@@ -1057,3 +1118,161 @@ async function seoPreview(idx) {
 }
 
 window.tiktokPage = { dlUp: dlUpSingle, seoPreview, saveToComputer };
+
+// ══════════════════════════════════════════════════════════════
+// WATCHLIST PANEL
+// ══════════════════════════════════════════════════════════════
+
+function initWatchlistPanel() {
+  document.getElementById('btn-watchlist-add-open')?.addEventListener('click', () => {
+    const form = document.getElementById('watchlist-add-form');
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    if (form.style.display === 'block') document.getElementById('wl-keyword')?.focus();
+  });
+
+  document.getElementById('btn-watchlist-cancel')?.addEventListener('click', () => {
+    document.getElementById('watchlist-add-form').style.display = 'none';
+    document.getElementById('wl-keyword').value = '';
+  });
+
+  document.getElementById('btn-watchlist-save')?.addEventListener('click', addWatchlistKeyword);
+  document.getElementById('wl-keyword')?.addEventListener('keypress', e => {
+    if (e.key === 'Enter') addWatchlistKeyword();
+  });
+
+  document.getElementById('btn-watchlist-run')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btn-watchlist-run');
+    btn.disabled = true; btn.textContent = 'กำลังรัน...';
+    try {
+      const r = await fetch('/api/watchlist/run', { method: 'POST' });
+      const d = await r.json();
+      window.app.showToast(d.message || 'เริ่ม watchlist run แล้ว', d.success ? 'success' : 'error');
+    } catch(e) {
+      window.app.showToast('เกิดข้อผิดพลาด', 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = 'รันตอนนี้';
+    }
+  });
+
+  loadWatchlist();
+}
+
+async function loadWatchlist() {
+  try {
+    const r = await fetch('/api/watchlist');
+    const d = await r.json();
+    renderWatchlistStats(d.stats);
+    renderWatchlistList(d.keywords);
+  } catch(e) {
+    document.getElementById('watchlist-list').innerHTML = '<p class="empty-state">โหลดไม่ได้</p>';
+  }
+}
+
+function renderWatchlistStats(stats) {
+  const el = document.getElementById('watchlist-stats');
+  if (!el || !stats) return;
+  el.innerHTML = `
+    <div class="watchlist-stat">
+      <span class="watchlist-stat-value">${stats.total}</span>
+      <span class="watchlist-stat-label">keywords</span>
+    </div>
+    <div class="watchlist-stat">
+      <span class="watchlist-stat-value">${stats.enabled}</span>
+      <span class="watchlist-stat-label">เปิดใช้งาน</span>
+    </div>
+    <div class="watchlist-stat">
+      <span class="watchlist-stat-value">${stats.totalAutoUploaded}</span>
+      <span class="watchlist-stat-label">auto-uploaded ทั้งหมด</span>
+    </div>
+    <div class="watchlist-stat">
+      <span class="watchlist-stat-label" style="grid-column:span 1">
+        รันล่าสุด: ${stats.lastRunAt ? window.app.timeAgo(stats.lastRunAt) : 'ยังไม่เคยรัน'}
+      </span>
+    </div>`;
+}
+
+function renderWatchlistList(keywords) {
+  const el = document.getElementById('watchlist-list');
+  if (!keywords || keywords.length === 0) {
+    el.innerHTML = `
+      <div class="empty-state">
+        <p>ยังไม่มี keyword</p>
+        <p style="font-size:0.8rem;margin-top:4px">กด "+ เพิ่ม Keyword" เพื่อเริ่มต้น</p>
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = keywords.map(kw => `
+    <div class="watchlist-item ${kw.enabled ? '' : 'disabled'}" data-id="${kw.id}">
+      <div class="watchlist-item-main">
+        <label class="toggle-switch" title="เปิด/ปิด">
+          <input type="checkbox" class="wl-toggle" data-id="${kw.id}" ${kw.enabled ? 'checked' : ''}>
+          <span class="toggle-slider"></span>
+        </label>
+        <div class="watchlist-item-info">
+          <span class="watchlist-keyword">${window.app.escapeHtml(kw.keyword)}</span>
+          <span class="watchlist-meta">
+            ${kw.countPerRun} คลิป/รอบ
+            · คะแนน ≥${kw.minScore}
+            · อัปแล้ว ${kw.totalUploaded || 0} คลิป
+            ${kw.lastRunAt ? `· รันล่าสุด ${window.app.timeAgo(kw.lastRunAt)}` : '· ยังไม่ได้รัน'}
+          </span>
+        </div>
+      </div>
+      <button class="btn btn-danger btn-sm wl-delete" data-id="${kw.id}">ลบ</button>
+    </div>`).join('');
+
+  // Toggle enable/disable
+  el.querySelectorAll('.wl-toggle').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      await fetch(`/api/watchlist/${cb.dataset.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: cb.checked })
+      });
+      window.app.showToast(cb.checked ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว', 'success');
+      loadWatchlist();
+    });
+  });
+
+  // Delete
+  el.querySelectorAll('.wl-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('ลบ keyword นี้?')) return;
+      await fetch(`/api/watchlist/${btn.dataset.id}`, { method: 'DELETE' });
+      window.app.showToast('ลบแล้ว', 'success');
+      loadWatchlist();
+    });
+  });
+}
+
+async function addWatchlistKeyword() {
+  const keyword  = document.getElementById('wl-keyword').value.trim();
+  const count    = document.getElementById('wl-count').value;
+  const minScore = document.getElementById('wl-minscore').value;
+
+  if (!keyword) { window.app.showToast('ใส่ keyword ก่อน', 'error'); return; }
+
+  try {
+    const r = await fetch('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword, countPerRun: parseInt(count), minScore: parseInt(minScore) })
+    });
+    const d = await r.json();
+    if (d.success) {
+      window.app.showToast(`เพิ่ม "${keyword}" สำเร็จ`, 'success');
+      document.getElementById('wl-keyword').value = '';
+      document.getElementById('watchlist-add-form').style.display = 'none';
+      loadWatchlist();
+    } else {
+      window.app.showToast(d.error || 'เกิดข้อผิดพลาด', 'error');
+    }
+  } catch(e) {
+    window.app.showToast('เกิดข้อผิดพลาด', 'error');
+  }
+}
+
+// Reload watchlist when switching to that tab
+const _origSwitchMode = window._switchModeRef;
+window._watchlistTabCallback = () => loadWatchlist();

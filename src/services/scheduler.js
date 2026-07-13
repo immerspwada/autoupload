@@ -190,6 +190,11 @@ class Scheduler {
     schedulerStore.save({ ...schedulerStore.load(), lastRun: new Date().toISOString() });
     logger.info('Scheduler scan complete', { scanned: files.length, queued });
 
+    // ★ Run keyword watchlist after folder scan
+    this.runWatchlist().catch(err =>
+      logger.error('Watchlist run error', { error: err.message })
+    );
+
     return { scanned: files.length, queued };
   }
 
@@ -303,6 +308,84 @@ class Scheduler {
     }
 
     return updated;
+  }
+
+  /**
+   * Run Keyword Watchlist — ค้นหา TikTok ตาม keywords ที่บันทึกไว้
+   * แล้วอัปโหลด YouTube อัตโนมัติ (เรียกโดย scan() และ API)
+   */
+  async runWatchlist() {
+    if (!this._checkQuotaBeforeScan()) {
+      logger.info('[Watchlist] Quota หมด — ข้าม watchlist run');
+      return { queued: 0, skipped: 0, reason: 'quota_exhausted' };
+    }
+
+    const authStatus = youtubeService.isAuthenticated();
+    if (!authStatus.authenticated) {
+      logger.warn('[Watchlist] ยังไม่ได้ login YouTube — ข้าม watchlist run');
+      return { queued: 0, skipped: 0, reason: 'not_authenticated' };
+    }
+
+    const watchlistService = require('./watchlist');
+    const seoService       = require('./seo');
+    const config           = settings.load();
+
+    return watchlistService.runAll(async ({ video, keyword, watchId }) => {
+      // Generate SEO metadata
+      const metadata = seoService.generateMetadata(video, {
+        source:   'tiktok',
+        keyword,
+        privacy:  config.privacy || 'public',
+        schedule: config.autoSchedule,
+      });
+
+      // Download + upload via queue
+      const tiktokService = require('./tiktok');
+
+      uploadQueue.add(async () => {
+        // Download no-watermark
+        const downloaded = await tiktokService.downloadNoWatermark(
+          video.videoUrl,
+          (video.desc || keyword).substring(0, 60)
+        );
+
+        // Upload to YouTube
+        const result = await youtubeService.uploadVideo({
+          filepath:    downloaded.filepath,
+          title:       metadata.title,
+          description: metadata.description,
+          tags:        Array.isArray(metadata.tags) ? metadata.tags.join(',') : metadata.tags,
+          privacy:     metadata.privacy || config.privacy || 'public',
+          publishAt:   metadata.publishAt,
+          categoryId:  metadata.categoryId,
+        });
+
+        // Record upload
+        const allUploads = uploads.load();
+        allUploads.push({
+          filename:         downloaded.filename,
+          filepath:         downloaded.filepath,
+          youtube_id:       result.videoId,
+          youtube_url:      result.youtubeUrl,
+          uploaded_at:      new Date().toISOString(),
+          source:           'tiktok_watchlist',
+          source_url:       video.videoUrl,
+          tiktok_video_id:  video.id,
+          watch_keyword:    keyword,
+          deleted:          false,
+        });
+        uploads.save(allUploads);
+
+        // Cleanup downloaded file
+        try {
+          if (fs.existsSync(downloaded.filepath)) fs.unlinkSync(downloaded.filepath);
+        } catch (_) {}
+
+        this._updateStats(downloaded.filepath, true);
+        logger.info('[Watchlist] Upload complete', { keyword, title: metadata.title, youtubeUrl: result.youtubeUrl });
+        return result;
+      }, { filename: downloaded?.filename || keyword });
+    });
   }
 }
 

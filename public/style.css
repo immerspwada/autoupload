@@ -3105,3 +3105,92 @@ kbd {
   font-size: 0.8rem;
 }
 .dashboard-see-all:hover { text-decoration: underline; }
+
+/* ══════════════════════════════════════════════════════════
+   Keyword Watchlist
+   ══════════════════════════════════════════════════════════ */
+.watchlist-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.watchlist-header h3 { margin: 0 0 2px; }
+
+/* Stats bar */
+.watchlist-stats {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--surface, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.watchlist-stat { display: flex; flex-direction: column; align-items: center; }
+.watchlist-stat-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+}
+.watchlist-stat-label { font-size: 0.7rem; color: var(--text-muted); margin-top: 2px; }
+
+/* Add form */
+.watchlist-add-form {
+  background: var(--surface, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.watchlist-form-grid {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: end;
+}
+@media (max-width: 560px) { .watchlist-form-grid { grid-template-columns: 1fr; } }
+
+/* Keyword list */
+.watchlist-list { display: flex; flex-direction: column; gap: 8px; }
+
+.watchlist-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition);
+}
+.watchlist-item:hover { border-color: var(--border-hover); }
+.watchlist-item.disabled { opacity: 0.55; }
+
+.watchlist-item-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+.watchlist-item-info { flex: 1; min-width: 0; }
+
+.watchlist-keyword {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: block;
+}
+.watchlist-meta {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: block;
+}
