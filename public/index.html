@@ -54,6 +54,15 @@
         <div style="display:flex;align-items:center;gap:6px;">
           <span class="sb-icon">U</span>
           <span class="sb-text">คิวว่าง</span>
+          <button class="sb-queue-btn" id="sb-queue-pause" onclick="window.app.toggleQueuePause()" title="หยุด/เริ่มคิว" style="display:none;">⏸</button>
+        </div>
+      </div>
+
+      <div class="status-bar-item" id="sb-tiktok-dl">
+        <div class="sb-label">TikTok DL วันนี้</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="sb-icon">D</span>
+          <span class="sb-text" id="sb-dl-count">0 วันนี้</span>
         </div>
       </div>
       

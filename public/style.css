@@ -768,14 +768,152 @@ header h1 { font-size: 1.75rem; font-weight: 700; color: var(--text-primary); le
   width: 100%;
   margin-top: 10px;
   padding: 10px 12px;
-  background: rgba(255,255,255,0.02);
-  border: 1px dashed var(--border);
+  background: var(--surface, #f8fafc);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 0.78rem;
 }
-.seo-mini-title { font-weight: 500; margin-bottom: 6px; }
-.seo-mini-tags { margin-bottom: 6px; }
-.seo-mini-cat { color: var(--text-secondary); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* seo-plan-grid: score pill + metrics side by side */
+.seo-plan-grid {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.seo-plan-score {
+  width: 54px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.seo-plan-score strong {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.seo-plan-score span {
+  color: var(--text-muted);
+  font-size: 0.6rem;
+}
+
+.seo-plan-score.premium {
+  background: #111827;
+  color: #ffffff;
+  border-color: #111827;
+}
+.seo-plan-score.premium span { color: #d1d5db; }
+
+.seo-plan-score.growth {
+  background: var(--success-bg);
+  color: var(--success);
+  border-color: rgba(22,163,74,0.2);
+}
+
+.seo-plan-score.test {
+  background: var(--info-bg);
+  color: var(--info);
+  border-color: rgba(37,99,235,0.18);
+}
+
+.seo-plan-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.seo-plan-metrics span {
+  padding: 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.seo-mini-title {
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.seo-mini-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.seo-mini-cat {
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  margin-bottom: 4px;
+}
+
+.seo-plan-angle {
+  margin-top: 6px;
+  padding: 5px 8px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+  color: #92400e;
+  font-size: 0.72rem;
+}
+
+.seo-plan-action {
+  margin-top: 5px;
+  padding: 5px 8px;
+  background: var(--success-bg);
+  border: 1px solid rgba(22,163,74,0.18);
+  border-radius: var(--radius-sm);
+  color: var(--success);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.seo-plan-lists {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.seo-plan-lists > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex: 1 1 140px;
+}
+
+.seo-plan-lists strong {
+  color: var(--text-primary);
+  font-size: 0.7rem;
+  font-weight: 650;
+  margin-bottom: 1px;
+}
+
+.seo-plan-lists span {
+  color: var(--text-muted);
+  font-size: 0.69rem;
+  line-height: 1.35;
+}
 
 /* ===== PROGRESS ===== */
 .progress-container {
@@ -915,8 +1053,8 @@ header h1 { font-size: 1.75rem; font-weight: 700; color: var(--text-primary); le
   .file-actions { width: 100%; justify-content: flex-end; margin-top: 8px; }
   .tabs { gap: 1px; padding: 3px; }
   .tab { padding: 9px 12px; font-size: 0.75rem; }
-  .tiktok-video-item { flex-wrap: wrap; }
-  .tiktok-video-actions { width: 100%; flex-direction: row; justify-content: flex-end; margin-top: 8px; }
+  .tiktok-video-item { grid-template-columns: 20px 44px 1fr; grid-template-rows: auto auto; }
+  .tiktok-video-actions { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; margin-top: 4px; }
   .search-box, .url-input-row { flex-direction: column; }
   .tiktok-batch-actions { width: 100%; }
   .tiktok-results-header { flex-direction: column; align-items: flex-start; }
@@ -2398,115 +2536,22 @@ kbd {
   line-height: 1.35;
 }
 
-.seo-plan-grid {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.seo-plan-score {
-  width: 62px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-
-.seo-plan-score strong {
-  font-size: 1.15rem;
-  line-height: 1;
-}
-
-.seo-plan-score span {
-  color: var(--text-muted);
-  font-size: 0.62rem;
-}
-
-.seo-plan-score.premium {
-  background: #111827;
-  color: #ffffff;
-  border-color: #111827;
-}
-
-.seo-plan-score.premium span {
-  color: #d1d5db;
-}
-
-.seo-plan-score.growth {
-  background: var(--success-bg);
-  color: var(--success);
-  border-color: rgba(22, 163, 74, 0.2);
-}
-
-.seo-plan-score.test {
-  background: var(--info-bg);
-  color: var(--info);
-  border-color: rgba(37, 99, 235, 0.18);
-}
-
-.seo-plan-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
+.seo-plan-grid,
+.seo-plan-score,
+.seo-plan-score strong,
+.seo-plan-score span,
+.seo-plan-score.premium,
+.seo-plan-score.premium span,
+.seo-plan-score.growth,
+.seo-plan-score.test,
+.seo-plan-metrics,
 .seo-plan-metrics span,
 .seo-plan-action,
-.seo-plan-angle {
-  padding: 6px 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  font-size: 0.74rem;
-}
-
-.seo-plan-angle {
-  margin-top: 10px;
-  background: #fffbeb;
-  border-color: #fde68a;
-  color: #92400e;
-}
-
-.seo-plan-action {
-  margin-top: 8px;
-  background: var(--success-bg);
-  border-color: rgba(22, 163, 74, 0.18);
-  color: var(--success);
-  font-weight: 600;
-}
-
-.seo-plan-lists {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.seo-plan-lists div {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 8px;
-  background: #ffffff;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.seo-plan-lists strong {
-  color: var(--text-primary);
-  font-size: 0.72rem;
-}
-
-.seo-plan-lists span {
-  color: var(--text-muted);
-  font-size: 0.7rem;
-  line-height: 1.35;
-}
+.seo-plan-angle,
+.seo-plan-lists,
+.seo-plan-lists div,
+.seo-plan-lists strong,
+.seo-plan-lists span { /* consolidated above — kept for reference */ }
 
 .tiktok-video-item {
   cursor: pointer;
@@ -2575,7 +2620,7 @@ kbd {
   }
 
   .seo-plan-lists {
-    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 }
 
@@ -3085,6 +3130,392 @@ kbd {
   text-decoration: underline;
 }
 
+/* ── Source URL row under the title ─────────────────────── */
+.tiktok-source-url {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 1px 0 2px;
+}
+
+.tiktok-source-url .url-text {
+  font-size: 0.68rem;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
+  color: var(--text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  transition: color 0.12s;
+}
+
+.tiktok-source-url .url-text:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.copy-url-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px 3px;
+  opacity: 0;
+  font-size: 0.72rem;
+  line-height: 1;
+  border-radius: 3px;
+  transition: opacity 0.12s, background 0.12s;
+  color: var(--text-muted);
+}
+
+/* show copy button only on card hover */
+.tiktok-video-item:hover .copy-url-btn {
+  opacity: 0.55;
+}
+.copy-url-btn:hover {
+  opacity: 1 !important;
+  background: var(--surface, #f8fafc);
+}
+
+/* ══════════════════════════════════════════════════════════
+   TIKTOK CARD — clean minimal redesign
+   ══════════════════════════════════════════════════════════ */
+
+.tiktok-video-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 640px;
+  overflow-y: auto;
+}
+
+.tiktok-video-item {
+  display: grid;
+  grid-template-columns: 20px 52px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+  cursor: pointer;
+  position: relative;
+}
+
+.tiktok-video-item:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 2px 8px rgba(16,24,40,0.07);
+}
+
+.tiktok-video-item.uploaded {
+  background: #f6fef9;
+  border-color: #bbf7d0;
+  opacity: 1;
+}
+
+.tiktok-video-item.blocked {
+  background: #fffbfb;
+  border-color: #fecaca;
+  opacity: 1;
+}
+
+.tiktok-video-item.blocked .tiktok-video-info,
+.tiktok-video-item.blocked .tiktok-thumb {
+  opacity: 0.52;
+}
+
+/* Checkbox column */
+.tiktok-select {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
+}
+.tiktok-select input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--text-primary);
+  cursor: pointer;
+  margin: 0;
+  border: 1px solid var(--border) !important;
+  border-radius: 4px !important;
+}
+
+/* Thumbnail */
+.tiktok-thumb {
+  width: 52px;
+  height: 70px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--surface);
+  position: relative;
+}
+.tiktok-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  background: #f1f5f9;
+}
+.virality-overlay {
+  position: absolute;
+  bottom: 3px;
+  left: 3px;
+  right: 3px;
+  background: rgba(0,0,0,0.62);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-align: center;
+  color: #fff;
+}
+
+/* Info column */
+.tiktok-video-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.quality-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.tiktok-video-title {
+  font-size: 0.83rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+}
+
+.opportunity-angle {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+  margin: 0;
+}
+
+.tiktok-video-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  align-items: center;
+  margin-top: 1px;
+}
+
+/* Actions column */
+.tiktok-video-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex-shrink: 0;
+  align-items: stretch;
+  min-width: 86px;
+}
+.tiktok-video-actions .btn {
+  white-space: nowrap;
+  justify-content: center;
+  font-size: 0.72rem !important;
+  padding: 5px 10px !important;
+}
+
+/* ── Smart panel compact ─────────────────────────────── */
+.tiktok-smart-panel {
+  padding: 14px 16px;
+  gap: 14px;
+}
+
+.tiktok-smart-panel h3 {
+  font-size: 0.95rem;
+  margin: 2px 0 3px;
+}
+
+.smart-panel-kicker {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+}
+
+/* ── Tabs ─────────────────────────────────────────────── */
+.tiktok-tabs {
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 12px;
+}
+
+.tiktok-tab {
+  font-size: 0.8rem !important;
+  padding: 8px 12px !important;
+}
+
+/* ── Mode panels ─────────────────────────────────────── */
+.tiktok-mode h3 {
+  font-size: 0.92rem;
+  margin-bottom: 2px;
+}
+.tiktok-mode .section-desc {
+  margin-bottom: 12px;
+}
+
+/* ── URL box ─────────────────────────────────────────── */
+.tiktok-url-box {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Results header ───────────────────────────────────── */
+.tiktok-results-header {
+  margin-bottom: 10px;
+  gap: 8px;
+}
+.results-controls-row {
+  gap: 8px;
+}
+.filter-chip {
+  font-size: 0.72rem;
+  padding: 4px 9px;
+}
+.sort-select {
+  font-size: 0.72rem;
+  padding: 4px 9px;
+}
+
+/* ── Insights strip ───────────────────────────────────── */
+.tiktok-insights {
+  margin-bottom: 10px;
+  gap: 8px;
+}
+.insight-card {
+  min-height: 50px;
+  padding: 8px 10px;
+}
+.insight-value {
+  font-size: 1rem;
+}
+.insight-label {
+  font-size: 0.65rem;
+}
+.insight-recommendation {
+  padding: 8px 10px;
+  font-size: 0.75rem;
+}
+
+/* ── Progress bar — slim attached header ─────────────── */
+.progress-container {
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.progress-bar {
+  height: 4px;
+  background: #eef1f5;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--text-primary);
+  border-radius: 2px;
+  transition: width 0.35s ease;
+  width: 0%;
+}
+.progress-file {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Batch result items ────────────────────────────────── */
+.drop-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.drop-result-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  font-size: 0.78rem;
+  border: 1px solid transparent;
+  line-height: 1.35;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+
+.drop-result-item.error {
+  background: #fef3f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.drop-result-item a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.12s;
+}
+.drop-result-item a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Batch save header row inside drop-results */
+.batch-save-header {
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
 /* quota tier colours (replaces inline color: var(--x)) */
 .quota-tier-ok       { color: var(--success); background: var(--success); }
 .quota-tier-warning  { color: var(--warning); background: var(--warning); }
@@ -3297,3 +3728,382 @@ kbd {
 .log-search .wl-log-msg { color: var(--info); }
 .log-found  .wl-log-msg { color: var(--text-primary); }
 .log-info   .wl-log-msg { color: var(--text-secondary); }
+
+/* ══════════════════════════════════════════════════════════
+   Watchlist — inline edit pills + provider stats
+   ══════════════════════════════════════════════════════════ */
+
+/* Meta row with inline selects */
+.watchlist-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+}
+
+.watchlist-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px 2px 5px;
+  background: var(--surface, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+/* Inline select inside pill — no border, transparent bg */
+.wl-inline-select {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--text-primary) !important;
+  font-size: 0.7rem !important;
+  padding: 0 14px 0 2px !important;
+  cursor: pointer;
+  outline: none;
+  min-width: 0;
+  appearance: auto;
+}
+.wl-inline-select:focus { outline: none; }
+
+/* Provider stats panel */
+.watchlist-provider-stats {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.provider-stats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.provider-stats-refresh {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: color 0.12s;
+}
+.provider-stats-refresh:hover { color: var(--text-primary); }
+
+.provider-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.provider-stat-card {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface, #f8fafc);
+}
+
+.provider-stat-card.provider-ok     { border-color: rgba(22,163,74,.22); background: #f0fdf4; }
+.provider-stat-card.provider-warn   { border-color: rgba(181,71,8,.18);  background: #fffbeb; }
+.provider-stat-card.provider-bad    { border-color: rgba(220,38,38,.18); background: #fef3f2; }
+.provider-stat-card.provider-unknown { border-color: var(--border); }
+
+.provider-stat-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+}
+
+.provider-stat-rate {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+  margin-bottom: 5px;
+}
+.provider-ok   .provider-stat-rate { color: var(--success); }
+.provider-warn .provider-stat-rate { color: var(--warning); }
+.provider-bad  .provider-stat-rate { color: var(--error); }
+
+.provider-stat-bar-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.provider-stat-bar-fill {
+  height: 100%;
+  background: var(--text-primary);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.provider-ok   .provider-stat-bar-fill { background: var(--success); }
+.provider-warn .provider-stat-bar-fill { background: var(--warning); }
+.provider-bad  .provider-stat-bar-fill { background: var(--error); }
+
+.provider-stat-detail {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+/* Queue pause button in status bar */
+.sb-queue-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 1px 5px;
+  line-height: 1.4;
+  transition: background 0.12s, color 0.12s;
+}
+.sb-queue-btn:hover {
+  background: var(--surface, #f8fafc);
+  color: var(--text-primary);
+}
+
+/* Queue paused state */
+#sb-queue.queue-paused .sb-text { color: var(--warning); }
+
+/* ══════════════════════════════════════════════════════════
+   Dashboard — Source Breakdown row
+   ══════════════════════════════════════════════════════════ */
+.dashboard-source-row {
+  margin-bottom: 14px;
+}
+
+.source-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.source-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.source-chip-error {
+  border-color: rgba(220,38,38,.22);
+  background: var(--error-bg);
+}
+
+.source-chip-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+  width: 26px;
+  text-align: center;
+}
+
+.source-chip-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.source-chip-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-chip-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.source-chip-bar-track {
+  position: absolute; /* hidden — layout only, visual is text */
+  display: none;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Dashboard — Scheduler status card
+   ══════════════════════════════════════════════════════════ */
+.scheduler-status-card {
+  padding: 14px 16px;
+  background: var(--surface, #f8fafc);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.sched-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sched-dot-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sched-status-text {
+  color: var(--text-primary);
+}
+
+.sched-last-run {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.sched-quota-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sched-quota-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.sched-quota-val {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sched-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* status-dot paused state */
+.status-dot.paused {
+  background: var(--warning);
+  box-shadow: 0 0 6px var(--warning);
+}
+
+/* ══════════════════════════════════════════════════════════
+   Activity — source badges + YouTube link
+   ══════════════════════════════════════════════════════════ */
+
+.activity-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  margin-left: 6px;
+  vertical-align: middle;
+  border: 1px solid transparent;
+}
+
+.activity-badge-tiktok {
+  background: #fff1f2;
+  color: #be123c;
+  border-color: #fecdd3;
+}
+
+.activity-badge-watchlist {
+  background: #f0fdf4;
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+
+.activity-badge-folder {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.activity-badge-drop {
+  background: #fafafa;
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.activity-yt-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 8px;
+  background: #fff1f2;
+  color: #be123c;
+  border: 1px solid #fecdd3;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.12s;
+}
+.activity-yt-link:hover {
+  background: #fecdd3;
+  text-decoration: none;
+}
+
+.activity-virality {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Activity date-range row responsive */
+@media (max-width: 760px) {
+  .activity-date-range { flex-wrap: wrap; }
+}
+
+/* ══════════════════════════════════════════════════════════
+   Channel Stage pill + Watch Time pill
+   ══════════════════════════════════════════════════════════ */
+
+.stage-pill {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  color: #0369a1;
+  white-space: nowrap;
+}
+
+.wt-pill {
+  background: #fefce8;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}

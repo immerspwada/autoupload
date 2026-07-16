@@ -44,6 +44,23 @@ export function render() {
                 <span>ลบไฟล์หลังอัปโหลดสำเร็จ</span>
               </label>
             </div>
+
+            <!-- ★ Channel Stage — กำหนดกลยุทธ์การเลือกคลิป -->
+            <div class="form-group">
+              <label for="channelStage">ระยะของช่อง (กลยุทธ์การเลือกคลิป)</label>
+              <select id="channelStage" name="channelStage">
+                <option value="early_stage">🌱 เริ่มต้น — เน้นผู้ติดตาม + Watch Time (ยังไม่ถึง 1,000 subs)</option>
+                <option value="pre_ypp">📈 รอ YPP — เน้น Watch Hours สะสม (1,000 subs แล้ว รอ 4,000 ชม.)</option>
+                <option value="monetized">💰 Monetized — เน้นรายได้โฆษณา (ผ่าน YPP แล้ว)</option>
+              </select>
+              <small>
+                ระบบจะปรับ scoring model ให้เหมาะกับระยะของช่อง<br>
+                🌱 <strong>เริ่มต้น</strong>: เลือกคลิป tutorial/howto/storytelling ที่มีโอกาสสร้าง subscriber สูง<br>
+                📈 <strong>รอ YPP</strong>: เลือกคลิปยาว ≥60s ที่ engagement ดี สะสม watch hours เร็ว<br>
+                💰 <strong>Monetized</strong>: เลือกคลิปที่มีโอกาส RPM สูง (tech, finance, howto)
+              </small>
+            </div>
+
             <button type="submit" class="btn btn-primary">บันทึก</button>
           </form>
         </div>
@@ -113,6 +130,7 @@ export async function init() {
     if (s.deleteAfterUpload)  document.getElementById('deleteAfterUpload').checked = s.deleteAfterUpload === 'true' || s.deleteAfterUpload === true;
     if (s.defaultDescription) document.getElementById('defaultDescription').value = s.defaultDescription;
     if (s.defaultTags)        document.getElementById('defaultTags').value = s.defaultTags;
+    document.getElementById('channelStage').value = s.channelStage || 'early_stage';
   } catch(e) {
     console.warn('Settings load failed:', e.message);
   }
@@ -124,7 +142,8 @@ export async function init() {
       privacy:            document.getElementById('privacy').value,
       deleteAfterUpload:  document.getElementById('deleteAfterUpload').checked,
       defaultDescription: document.getElementById('defaultDescription').value,
-      defaultTags:        document.getElementById('defaultTags').value
+      defaultTags:        document.getElementById('defaultTags').value,
+      channelStage:       document.getElementById('channelStage').value
     };
     const r = await fetch('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
     window.app.showToast(r.ok ? 'บันทึกสำเร็จ' : 'เกิดข้อผิดพลาด', r.ok ? 'success' : 'error');

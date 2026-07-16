@@ -9,7 +9,7 @@ export function render() {
 
       <div class="card" style="margin-bottom:16px">
         <div class="card-header">
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <select id="activity-type-filter" class="filter-select">
               <option value="">ทุกประเภท</option>
               <option value="upload">อัปโหลด</option>
@@ -26,6 +26,13 @@ export function render() {
               <option value="warning">คำเตือน</option>
               <option value="info">ข้อมูล</option>
             </select>
+            <div class="activity-date-range" id="activity-date-range" style="display:flex;gap:6px;align-items:center">
+              <input type="date" id="activity-date-from" class="filter-select" style="padding:6px 8px;font-size:0.8rem;" title="จากวันที่">
+              <span style="color:var(--text-muted);font-size:0.8rem">–</span>
+              <input type="date" id="activity-date-to" class="filter-select" style="padding:6px 8px;font-size:0.8rem;" title="ถึงวันที่">
+              <button id="btn-date-filter" class="btn btn-secondary btn-sm">กรอง</button>
+              <button id="btn-date-clear" class="btn btn-secondary btn-sm">ล้าง</button>
+            </div>
           </div>
           <div style="display:flex;gap:8px">
             <button id="btn-activity-refresh" class="btn btn-secondary btn-sm">รีเฟรช</button>
@@ -62,6 +69,19 @@ export async function init() {
   document.getElementById('btn-activity-clear').addEventListener('click', clearActivities);
   document.getElementById('activity-type-filter').addEventListener('change', applyFilters);
   document.getElementById('activity-level-filter').addEventListener('change', applyFilters);
+
+  // Date range filter
+  document.getElementById('btn-date-filter').addEventListener('click', loadByDateRange);
+  document.getElementById('btn-date-clear').addEventListener('click', () => {
+    document.getElementById('activity-date-from').value = '';
+    document.getElementById('activity-date-to').value = '';
+    loadActivities();
+  });
+  // Default date-to = today
+  document.getElementById('activity-date-to').value = new Date().toISOString().split('T')[0];
+  // Default date-from = 7 days ago
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+  document.getElementById('activity-date-from').value = weekAgo;
   
   const loadMoreBtn = document.getElementById('btn-load-more');
   if (loadMoreBtn) {
@@ -72,6 +92,26 @@ export async function init() {
         loadMoreBtn.style.display = 'none';
       }
     });
+  }
+}
+
+async function loadByDateRange() {
+  const from = document.getElementById('activity-date-from').value;
+  const to   = document.getElementById('activity-date-to').value;
+  if (!from || !to) { window.app.showToast('กรุณาระบุวันที่', 'error'); return; }
+
+  const loading = document.getElementById('activity-loading');
+  loading.style.display = 'flex';
+  try {
+    const res = await fetch(`/api/activity/range?from=${from}&to=${to}`);
+    const data = await res.json();
+    allActivities = data.activities || [];
+    applyFilters();
+    loading.style.display = 'none';
+    window.app.showToast(`พบ ${allActivities.length} รายการ (${from} – ${to})`, 'info');
+  } catch(e) {
+    loading.style.display = 'none';
+    window.app.showToast('โหลดล้มเหลว: ' + e.message, 'error');
   }
 }
 
@@ -177,22 +217,37 @@ function renderActivity(activity) {
   const icon = getActivityIcon(activity.type, activity.level);
   const time = new Date(activity.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const levelClass = activity.level || 'info';
-  
+
+  // Source badge
+  const sourceMap = {
+    tiktok: { label: 'TikTok', cls: 'activity-badge-tiktok' },
+    tiktok_watchlist: { label: 'Watchlist', cls: 'activity-badge-watchlist' },
+    folder: { label: 'Folder', cls: 'activity-badge-folder' },
+    drop: { label: 'Drop', cls: 'activity-badge-drop' },
+  };
+  const src = activity.data?.source;
+  const sourceBadge = src && sourceMap[src]
+    ? `<span class="activity-source-badge ${sourceMap[src].cls}">${sourceMap[src].label}</span>`
+    : '';
+
   let detailsHtml = '';
   if (activity.data && Object.keys(activity.data).length > 0) {
     if (activity.data.youtubeUrl) {
-      detailsHtml += `<a href="${activity.data.youtubeUrl}" target="_blank" class="activity-link">🔗 YouTube</a>`;
+      detailsHtml += `<a href="${activity.data.youtubeUrl}" target="_blank" rel="noopener" class="activity-yt-link">▶ ดูบน YouTube</a>`;
     }
     if (activity.data.error) {
       detailsHtml += `<div class="activity-error">${window.app.escapeHtml(activity.data.error)}</div>`;
     }
+    if (activity.data.viralityScore != null) {
+      detailsHtml += `<span class="activity-virality">Virality ${activity.data.viralityScore}</span>`;
+    }
   }
-  
+
   return `
     <div class="activity-item activity-${levelClass}">
       <div class="activity-icon">${icon}</div>
       <div class="activity-content">
-        <div class="activity-message">${window.app.escapeHtml(activity.message)}</div>
+        <div class="activity-message">${window.app.escapeHtml(activity.message)}${sourceBadge}</div>
         ${detailsHtml}
         <div class="activity-meta">
           <span class="activity-time">${time}</span>

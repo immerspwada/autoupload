@@ -32,6 +32,7 @@ export function render() {
         <div class="stat-label">คลิปที่อัปได้วันนี้</div>
       </div>
     </div>
+    <div class="dashboard-source-row" id="dashboard-source-row" style="display:none;"></div>
     <div class="dashboard-sections">
       <div class="dashboard-section">
         <h3>7 วันย้อนหลัง</h3>
@@ -55,6 +56,10 @@ export function render() {
           <a href="#/activity" class="dashboard-see-all">ดูทั้งหมด →</a>
         </div>
         <div id="dashboard-activity" class="activity-compact"></div>
+      </div>
+      <div class="dashboard-section" style="grid-column: 1 / -1;">
+        <h3>Scheduler & Auto-Upload</h3>
+        <div id="dashboard-scheduler" class="dashboard-scheduler-info"></div>
       </div>
     </div>`;
 }
@@ -83,6 +88,8 @@ export async function init() {
     renderQueue(data.queue);
     renderRecent(data.recentUploads);
     renderRecentActivity();
+    renderSourceBreakdown(data.overview);
+    renderSchedulerStatus(data.scheduler, data.quota);
   } catch (err) {
     console.error('Dashboard load error:', err);
   }
@@ -366,5 +373,127 @@ window.showExtendedQuotaGuide = async function() {
     });
   } catch (err) {
     alert('ไม่สามารถโหลดคำแนะนำได้: ' + err.message);
+  }
+};
+
+// ★ Source breakdown — TikTok vs folder vs drop (stored in sourceStats but never shown)
+function renderSourceBreakdown(overview) {
+  const row = document.getElementById('dashboard-source-row');
+  if (!row) return;
+  const src = overview?.sourceStats;
+  if (!src || Object.keys(src).length === 0) return;
+
+  const total = Object.values(src).reduce((s, n) => s + n, 0) || 1;
+  const icons = { tiktok: '🎵', folder: '📂', drop: '⬆️', tiktok_watchlist: '⚡' };
+  const labels = { tiktok: 'TikTok (manual)', folder: 'Folder scan', drop: 'Drag & drop', tiktok_watchlist: 'Watchlist auto' };
+
+  const chips = Object.entries(src)
+    .filter(([, n]) => n > 0)
+    .sort(([, a], [, b]) => b - a)
+    .map(([key, n]) => {
+      const pct = Math.round((n / total) * 100);
+      return `
+        <div class="source-chip">
+          <span class="source-chip-icon">${icons[key] || '📦'}</span>
+          <div class="source-chip-body">
+            <span class="source-chip-label">${labels[key] || key}</span>
+            <span class="source-chip-count">${n} คลิป (${pct}%)</span>
+          </div>
+          <div class="source-chip-bar-track">
+            <div class="source-chip-bar-fill" style="width:${pct}%"></div>
+          </div>
+        </div>`;
+    }).join('');
+
+  const failed = overview.failedUploads || 0;
+  const failedChip = failed > 0 ? `
+    <div class="source-chip source-chip-error">
+      <span class="source-chip-icon">✕</span>
+      <div class="source-chip-body">
+        <span class="source-chip-label">อัปโหลดล้มเหลว</span>
+        <span class="source-chip-count">${failed} ครั้ง</span>
+      </div>
+    </div>` : '';
+
+  row.innerHTML = `<div class="source-breakdown">${chips}${failedChip}</div>`;
+  row.style.display = 'block';
+}
+
+// ★ Scheduler status card — เชื่อมข้อมูล scheduler กับ quota ที่มีอยู่แล้ว
+function renderSchedulerStatus(scheduler, quota) {
+  const el = document.getElementById('dashboard-scheduler');
+  if (!el) return;
+
+  if (!scheduler) {
+    el.innerHTML = '<p class="empty-state small">ไม่มีข้อมูล scheduler</p>';
+    return;
+  }
+
+  const enabled = scheduler.enabled;
+  const paused = scheduler.quotaPaused;
+  const lastRun = scheduler.lastRun ? window.app.timeAgo(scheduler.lastRun) : 'ยังไม่เคยรัน';
+  const interval = scheduler.intervalMinutes || 30;
+  const resumeAt = scheduler.quotaResumeAt
+    ? new Date(scheduler.quotaResumeAt).toLocaleString('th-TH', { hour: '2-digit', minute: '2-digit' })
+    : null;
+
+  const statusDot = !enabled ? 'inactive'
+    : paused ? 'paused'
+    : 'active';
+
+  const statusLabel = !enabled ? 'ปิดอยู่'
+    : paused ? `หยุดชั่วคราว (quota หมด)`
+    : `ทำงานอยู่ · ทุก ${interval} นาที`;
+
+  const quotaBlock = quota ? (() => {
+    const pct = Math.round(quota.percentUsed || 0);
+    const remaining = quota.uploadsRemaining || 0;
+    const fillCls = pct >= 90 ? 'critical' : pct >= 70 ? 'warning' : '';
+    return `
+      <div class="sched-quota-row">
+        <span class="sched-quota-label">YouTube Quota วันนี้</span>
+        <span class="sched-quota-val">${remaining} คลิปเหลือ (${pct}% ใช้แล้ว)</span>
+      </div>
+      <div class="quota-track" style="margin:6px 0 0;">
+        <div class="quota-track-fill ${fillCls}" style="width:${Math.min(pct,100)}%; background:${pct>=90?'var(--error)':pct>=70?'var(--warning)':'var(--text-primary)'};"></div>
+      </div>
+      ${resumeAt ? `<div class="sched-quota-label" style="margin-top:4px">รอ quota reset: ${resumeAt}</div>` : ''}`;
+  })() : '';
+
+  el.innerHTML = `
+    <div class="scheduler-status-card">
+      <div class="sched-header">
+        <div class="sched-dot-row">
+          <span class="status-dot ${statusDot === 'active' ? 'active' : 'inactive'}" style="${statusDot==='paused'?'background:var(--warning);box-shadow:0 0 6px var(--warning);':''}"></span>
+          <span class="sched-status-text">${statusLabel}</span>
+        </div>
+        <span class="sched-last-run">รันล่าสุด: ${lastRun}</span>
+      </div>
+      ${quotaBlock}
+      <div class="sched-actions">
+        <button class="btn btn-secondary btn-sm" onclick="window.app.navigate('/settings')">⚙ ตั้งค่า</button>
+        ${enabled
+          ? `<button class="btn btn-secondary btn-sm" id="sched-toggle-btn" onclick="window._toggleScheduler(false)">หยุด Scheduler</button>`
+          : `<button class="btn btn-primary btn-sm" id="sched-toggle-btn" onclick="window._toggleScheduler(true)">เปิด Scheduler</button>`}
+      </div>
+    </div>`;
+}
+
+window._toggleScheduler = async function(enable) {
+  const btn = document.getElementById('sched-toggle-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    await fetch('/api/stats/scheduler', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enable })
+    });
+    window.app.showToast(enable ? 'เปิด Scheduler แล้ว' : 'หยุด Scheduler แล้ว', 'success');
+    // reload dashboard
+    const mod = await import('./dashboard.js?v=2');
+    if (mod.init) mod.init();
+  } catch(e) {
+    window.app.showToast('เกิดข้อผิดพลาด', 'error');
+    if (btn) { btn.disabled = false; }
   }
 };

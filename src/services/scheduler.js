@@ -69,13 +69,13 @@ class Scheduler {
    */
   _checkQuotaBeforeScan() {
     try {
-      const quotaManager = require('./quota');
-      const status = quotaManager.getStatus();
-      if (status.uploadsRemaining <= 0) {
+      // ★ ใช้ youtubeService.getQuotaStatus() เพื่อรองรับ multi-account
+      // (quota.js เป็น legacy single-account store ที่อาจ out-of-sync)
+      const quotaStatus = youtubeService.getQuotaStatus();
+      if (quotaStatus.uploadsRemaining <= 0) {
         this._waitForQuotaReset();
         return false;
       }
-      // ถ้าหลุดจาก pause แล้ว quota กลับมาแล้ว clear flag
       if (this._quotaPaused) {
         this._quotaPaused = false;
         if (this._quotaWaitTimer) {
@@ -85,7 +85,6 @@ class Scheduler {
       }
       return true;
     } catch (err) {
-      // ถ้าโหลด quotaManager ไม่ได้ ให้ทำต่อ (ไม่บล็อก)
       return true;
     }
   }
@@ -219,12 +218,35 @@ class Scheduler {
     }
 
     uploadQueue.add(async () => {
+      // ★ Architecture rule: SEO service ต้องถูกเรียกก่อน upload ทุกครั้ง
+      const seoService = require('./seo');
+      const tiktokData = {
+        desc: path.basename(filename, path.extname(filename)),
+        author: '',
+        duration: 0,
+        videoUrl: filepath
+      };
+
+      // Validate monetization (hard block)
+      const validation = seoService.validateForMonetization(tiktokData, tiktokData.desc);
+      if (validation.status === 'blocked') {
+        logger.warn('[Scheduler] Skipping blocked content', { filename, issues: validation.issues.map(i => i.message) });
+        throw new Error(`บล็อกอัตโนมัติ: ${validation.issues[0]?.message || 'ผิดนโยบาย'}`);
+      }
+
+      // Generate SEO-optimized metadata
+      const metadata = seoService.generateMetadata(tiktokData, {
+        schedulePublish: config.autoSchedule || false
+      });
+
       const result = await youtubeService.uploadVideo({
         filepath,
-        title: path.basename(filename, path.extname(filename)),
-        description: config.defaultDescription || '',
-        tags: config.defaultTags || '',
-        privacy: config.privacy || 'public'
+        title: metadata.title || path.basename(filename, path.extname(filename)),
+        description: metadata.description || config.defaultDescription || '',
+        tags: Array.isArray(metadata.tags) ? metadata.tags.join(',') : (metadata.tags || config.defaultTags || ''),
+        privacy: metadata.privacy || config.privacy || 'public',
+        categoryId: metadata.categoryId,
+        publishAt: metadata.publishAt || null
       });
 
       // Record upload
@@ -249,8 +271,17 @@ class Scheduler {
 
       uploads.save(allUploads);
 
-      // Update stats
-      this._updateStats(filepath, true);
+      // ★ emit ผ่าน EventBus — ห้ามเรียก _updateStats ตรง (architecture rule)
+      // Queue จะ emit 'completed' event → orchestrator._wireQueue() จัดการ stats
+      // แต่ _queueFile ไม่มี orchestrator reference ดังนั้น emit ผ่าน require
+      const orchestrator = require('./orchestrator');
+      orchestrator.onUploadCompleted({
+        filename,
+        size: fs.existsSync(filepath) ? fs.statSync(filepath).size : 0,
+        source: 'folder',
+        videoId: result.videoId,
+        youtubeUrl: result.youtubeUrl
+      });
 
       return result;
     }, { filename });
@@ -403,14 +434,16 @@ class Scheduler {
     const watchlistService = require('./watchlist');
     const seoService       = require('./seo');
     const config           = settings.load();
+    const channelStage     = config.channelStage || 'early_stage';
 
     return watchlistService.runAll(async ({ video, keyword, watchId }) => {
-      // Generate SEO metadata
+      // Generate SEO metadata — ใช้ channelStage เพื่อ schedule prime-time ที่เหมาะกับระยะช่อง
       const metadata = seoService.generateMetadata(video, {
-        source:   'tiktok',
+        source:       'tiktok',
         keyword,
-        privacy:  config.privacy || 'public',
-        schedule: config.autoSchedule,
+        privacy:      config.privacy || 'public',
+        schedule:     config.autoSchedule,
+        channelStage,
       });
 
       // Download + upload via queue

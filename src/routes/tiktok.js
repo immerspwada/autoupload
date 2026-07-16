@@ -11,6 +11,21 @@ const orchestrator = require('../services/orchestrator');
 const { settings, uploads } = require('../utils/store');
 const logger = require('../utils/logger');
 
+// ★ Route timeout middleware — ป้องกัน request ค้างไม่มีกำหนด
+function withTimeout(ms) {
+  return (req, res, next) => {
+    const timer = setTimeout(() => {
+      if (!res.headersSent) {
+        logger.warn('Route timeout', { path: req.path, ms });
+        res.status(504).json({ error: 'Request timeout — tikwm API ใช้เวลานานเกินไป ลองใหม่อีกครั้ง' });
+      }
+    }, ms);
+    res.on('finish', () => clearTimeout(timer));
+    res.on('close',  () => clearTimeout(timer));
+    next();
+  };
+}
+
 // ==================== Duplicate Detection ====================
 
 /**
@@ -65,9 +80,11 @@ function enrichTikTokVideo(video) {
   const dupCheck = isDuplicateTikTok(video.videoUrl, videoId);
   const virality = seoService.calculateViralityScore(video);
   const validation = seoService.validateForMonetization(video, video.desc || '');
+  const config = settings.load();
+  const channelStage = config.channelStage || 'early_stage'; // ★ default = early stage
   const opportunity = seoService.analyzeOpportunity(
     { ...video, virality, validation },
-    { alreadyUploaded: dupCheck.duplicate }
+    { alreadyUploaded: dupCheck.duplicate, channelStage }
   );
 
   return {
@@ -84,7 +101,7 @@ function enrichTikTokVideo(video) {
 // Search TikTok videos by keyword (single or multiple)
 // Accepts either { keyword: "cat" } or { keywords: ["cat", "dog", "..."] }
 // Multiple keywords can also be sent as one comma/newline-separated string in `keyword`.
-router.post('/search', async (req, res) => {
+router.post('/search', withTimeout(32000), async (req, res) => {
   const { keyword, keywords, count } = req.body;
 
   // Normalize input into a list of keywords
@@ -147,7 +164,7 @@ router.post('/search', async (req, res) => {
 });
 
 // Discover trending videos WITHOUT a keyword (browse what's hot right now)
-router.get('/trending', async (req, res) => {
+router.get('/trending', withTimeout(18000), async (req, res) => {
   const region = req.query.region || 'TH';
   const count = parseInt(req.query.count) || 12;
 
@@ -166,7 +183,7 @@ router.get('/trending', async (req, res) => {
 
 // Fetch latest videos from a specific creator (@username) — track creators
 // whose content performs well and grab their newest clips.
-router.get('/creator/:username', async (req, res) => {
+router.get('/creator/:username', withTimeout(22000), async (req, res) => {
   const { username } = req.params;
   const count = parseInt(req.query.count) || 12;
 
@@ -176,7 +193,14 @@ router.get('/creator/:username', async (req, res) => {
       .map(enrichTikTokVideo)
       .sort((a, b) => (b.opportunity?.score || b.virality?.score || 0) - (a.opportunity?.score || a.virality?.score || 0));
 
-    res.json({ videos: enriched, username, totalFound: enriched.length });
+    // ตรวจว่าใช้ fallback หรือเปล่า — ดูจาก author ว่าตรงกับ username ไหม
+    const handle = username.replace(/^@/, '').toLowerCase();
+    const directMatch = enriched.filter(v => (v.author || '').toLowerCase() === handle);
+    const strategy = directMatch.length < enriched.length && enriched.length > 0
+      ? 'search_fallback'
+      : 'user_posts';
+
+    res.json({ videos: enriched, username, totalFound: enriched.length, strategy });
   } catch (error) {
     logger.error('TikTok creator fetch error', { error: error.message });
     res.status(500).json({ error: error.message });
@@ -219,7 +243,7 @@ router.post('/download', async (req, res) => {
 });
 
 // Download and immediately upload to YouTube
-router.post('/download-and-upload', async (req, res) => {
+router.post('/download-and-upload', withTimeout(115000), async (req, res) => {
   const { videoUrl, title, description, tags, privacy, filename, force } = req.body;
   if (!videoUrl) return res.status(400).json({ error: 'กรุณาระบุ URL ของวิดีโอ' });
 
@@ -378,6 +402,10 @@ router.post('/download-and-upload', async (req, res) => {
     });
   } catch (error) {
     logger.error('TikTok download-and-upload error', { error: error.message });
+    // ★ Clean up downloaded file if it exists (ป้องกัน disk leak)
+    if (typeof downloadResult !== 'undefined' && downloadResult?.filepath) {
+      try { if (fs.existsSync(downloadResult.filepath)) fs.unlinkSync(downloadResult.filepath); } catch (_) {}
+    }
     orchestrator.onUploadFailed({ filename: filename || 'tiktok-video', error: error.message, source: 'tiktok' });
     res.status(500).json({ error: error.message });
   }
@@ -624,6 +652,23 @@ function _scoreBatchCandidate(video, quotaStatus) {
   const flags = {};
   const virality = _getViralityScore(video);
   let score = virality * 0.58;
+
+  // ★ Channel stage — ปรับ bonus/penalty ตามระยะช่อง
+  const channelStage = settings.load().channelStage || 'early_stage';
+  const duration = Number(video.duration || 0);
+
+  if (channelStage === 'early_stage') {
+    // เน้น: tutorial/howto, engagement rate สูง (สัญญาณว่าคนดูจนจบ → subscribe)
+    if (duration >= 45) { score += 10; reasons.push('คลิปยาว เหมาะกับ watch time'); }
+    if (video.opportunity?.follower >= 70) { score += 8; reasons.push('โอกาสผู้ติดตามสูง'); }
+    if (video.opportunity?.watchTime >= 65) { score += 10; reasons.push('Watch Time potential ดี'); }
+  } else if (channelStage === 'pre_ypp') {
+    // เน้น: คลิปยาว ≥60s สะสม watch hours
+    if (duration >= 60) { score += 15; reasons.push('≥60s สะสม watch hours'); }
+    else if (duration < 20 && duration > 0) { score -= 12; reasons.push('หักคะแนน: สั้นไป ไม่ช่วย watch hours'); }
+    if (video.opportunity?.watchTime >= 60) { score += 8; reasons.push('Watch Time potential ดี'); }
+  }
+  // monetized = ใช้ virality เป็นหลัก (default เดิม)
 
   const views = Number(video.playCount || video.views || 0);
   const likes = Number(video.likeCount || 0);
@@ -965,7 +1010,7 @@ router.delete('/files/:filename', (req, res) => {
  * 
  * Flow: TikTok → server downloads (no watermark) → browser download dialog
  */
-router.post('/download-to-browser', async (req, res) => {
+router.post('/download-to-browser', withTimeout(85000), async (req, res) => {
   const { videoUrl, filename } = req.body;
   if (!videoUrl) return res.status(400).json({ error: 'กรุณาระบุ URL ของวิดีโอ' });
 

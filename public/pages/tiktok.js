@@ -124,6 +124,9 @@ export function render() {
           <p class="empty-state">กำลังโหลด...</p>
         </div>
 
+        <!-- Provider reliability stats -->
+        <div id="watchlist-provider-stats" class="watchlist-provider-stats" style="display:none;"></div>
+
         <!-- Live run status panel -->
         <div id="watchlist-run-panel" class="watchlist-run-panel" style="display:none">
           <div class="watchlist-run-header">
@@ -140,6 +143,12 @@ export function render() {
         </div>
       </div>
 
+      <div id="tiktok-batch-results" class="drop-results" style="display:none;"></div>
+      <div id="tiktok-progress" class="progress-container" style="display:none;">
+        <div class="progress-info"><span id="tiktok-progress-text">...</span><span id="tiktok-progress-count">0/0</span></div>
+        <div class="progress-bar"><div id="tiktok-progress-fill" class="progress-fill"></div></div>
+        <p id="tiktok-progress-file" class="progress-file"></p>
+      </div>
       <div id="tiktok-loading" class="loading-state" style="display:none;"><div class="spinner"></div><p>กำลังโหลด...</p></div>
       <div id="tiktok-results" style="display:none;">
         <div class="tiktok-results-header">
@@ -163,6 +172,7 @@ export function render() {
                 <option value="opportunity">มูลค่ารวม</option>
                 <option value="revenue">รายได้</option>
                 <option value="followers">ผู้ติดตาม</option>
+                <option value="watchtime">⏱ Watch Time</option>
                 <option value="seo">SEO</option>
                 <option value="virality">Virality</option>
                 <option value="likes">Likes</option>
@@ -187,12 +197,6 @@ export function render() {
         <div id="tiktok-insights" class="tiktok-insights"></div>
         <div id="tiktok-video-list" class="tiktok-video-list"></div>
       </div>
-      <div id="tiktok-progress" class="progress-container" style="display:none;">
-        <div class="progress-info"><span id="tiktok-progress-text">...</span><span id="tiktok-progress-count">0/0</span></div>
-        <div class="progress-bar"><div id="tiktok-progress-fill" class="progress-fill"></div></div>
-        <p id="tiktok-progress-file" class="progress-file"></p>
-      </div>
-      <div id="tiktok-batch-results" class="drop-results" style="display:none;"></div>
     </div>`;
 }
 
@@ -201,6 +205,7 @@ let currentVisibleResults = [];
 let currentFilters = { hideDuplicates: true, hideBlocked: false, sortBy: 'opportunity', minScore: 0 };
 let currentMode = 'search'; // track which tab is active for post-batch refresh
 let urlCheckTimer = null;
+let _activeBatchSSE = null; // ★ track active SSE for cleanup on navigate
 
 export function init() {
   // Mode tabs
@@ -288,6 +293,18 @@ function switchMode(mode) {
   if (mode === 'watchlist') loadWatchlist();
 }
 
+// ★ Helper — fetch with frontend timeout + clean abort handling
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: ctrl.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function search() {
   const raw = document.getElementById('tiktok-keyword').value.trim();
   if (!raw) { window.app.showToast('ใส่คีย์เวิร์ด', 'error'); return; }
@@ -299,11 +316,11 @@ async function search() {
   setLoading(true, `กำลังค้นหา ${keywordList.length} คำ และคัดผลลัพธ์ที่คุ้ม quota...`);
   document.getElementById('tiktok-results').style.display = 'none';
   try {
-    const res = await fetch('/api/tiktok/search', {
+    const res = await fetchWithTimeout('/api/tiktok/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keywords: keywordList, count })
-    });
+    }, 35000);
     const data = await res.json();
     setLoading(false);
     if (data.error) { window.app.showToast(data.error, 'error'); return; }
@@ -320,7 +337,11 @@ async function search() {
     applyFilters();
     document.getElementById('tiktok-results').style.display = 'block';
     attachFilterListeners();
-  } catch(e) { setLoading(false); window.app.showToast(e.message,'error'); }
+  } catch(e) {
+    setLoading(false);
+    if (e.name === 'AbortError') window.app.showToast('ค้นหาใช้เวลานานเกินไป กรุณาลองใหม่', 'error');
+    else window.app.showToast(e.message, 'error');
+  }
 }
 
 async function fetchTrending() {
@@ -328,17 +349,24 @@ async function fetchTrending() {
   setLoading(true, `กำลังดึงคลิป trending ${region} และตรวจ duplicate...`);
   document.getElementById('tiktok-results').style.display = 'none';
   try {
-    const res = await fetch(`/api/tiktok/trending?region=${region}&count=12`);
+    const res = await fetchWithTimeout(`/api/tiktok/trending?region=${region}&count=12`, {}, 20000);
     const data = await res.json();
     setLoading(false);
     if (data.error) { window.app.showToast(data.error, 'error'); return; }
     results = data.videos || [];
+    if (results.length === 0) {
+      window.app.showToast(`ไม่มีข้อมูล trending ${region} ในขณะนี้ ลองใหม่ภายหลัง`, 'info');
+    }
     document.getElementById('tiktok-result-keyword').textContent = `Trending ${data.region} (${results.length})`;
     document.getElementById('tiktok-keyword-breakdown').innerHTML = '';
     applyFilters();
     document.getElementById('tiktok-results').style.display = 'block';
     attachFilterListeners();
-  } catch(e) { setLoading(false); window.app.showToast(e.message,'error'); }
+  } catch(e) {
+    setLoading(false);
+    if (e.name === 'AbortError') window.app.showToast('Trending timeout — ลองเปลี่ยนภูมิภาคหรือลองใหม่', 'error');
+    else window.app.showToast(e.message, 'error');
+  }
 }
 
 async function fetchCreator() {
@@ -348,17 +376,29 @@ async function fetchCreator() {
   setLoading(true, `กำลังดึงคลิปล่าสุดจาก @${username}...`);
   document.getElementById('tiktok-results').style.display = 'none';
   try {
-    const res = await fetch(`/api/tiktok/creator/${encodeURIComponent(username)}?count=12`);
+    const res = await fetchWithTimeout(`/api/tiktok/creator/${encodeURIComponent(username)}?count=12`, {}, 25000);
     const data = await res.json();
     setLoading(false);
     if (data.error) { window.app.showToast(data.error, 'error'); return; }
     results = data.videos || [];
-    document.getElementById('tiktok-result-keyword').textContent = `@${data.username} (${results.length})`;
+    if (results.length === 0) {
+      window.app.showToast(`ไม่พบคลิปจาก @${username} — อาจเป็น private account หรือ username ไม่ถูกต้อง`, 'error');
+      return;
+    }
+    const strategyNote = data.strategy === 'search_fallback' ? ' (search fallback)' : '';
+    document.getElementById('tiktok-result-keyword').textContent = `@${data.username} (${results.length})${strategyNote}`;
     document.getElementById('tiktok-keyword-breakdown').innerHTML = '';
     applyFilters();
     document.getElementById('tiktok-results').style.display = 'block';
     attachFilterListeners();
-  } catch(e) { setLoading(false); window.app.showToast(e.message,'error'); }
+    if (data.strategy === 'search_fallback') {
+      window.app.showToast(`ใช้ search fallback — แสดงคลิปที่เกี่ยวกับ @${username}`, 'info');
+    }
+  } catch(e) {
+    setLoading(false);
+    if (e.name === 'AbortError') window.app.showToast('Creator timeout — ลองใหม่', 'error');
+    else window.app.showToast(e.message, 'error');
+  }
 }
 
 function renderKeywordBreakdown(perKeyword) {
@@ -437,6 +477,8 @@ function applyFilters() {
     filtered.sort((a, b) => getRevenueScore(b) - getRevenueScore(a));
   } else if (currentFilters.sortBy === 'followers') {
     filtered.sort((a, b) => getFollowerScore(b) - getFollowerScore(a));
+  } else if (currentFilters.sortBy === 'watchtime') {
+    filtered.sort((a, b) => getWatchTimeScore(b) - getWatchTimeScore(a));
   } else if (currentFilters.sortBy === 'seo') {
     filtered.sort((a, b) => getSeoScore(b) - getSeoScore(a));
   } else if (currentFilters.sortBy === 'virality') {
@@ -461,6 +503,10 @@ function getEngagementRate(v) {
 
 function getOpportunityScore(v) {
   return v.opportunity?.score ?? v.virality?.score ?? 0;
+}
+
+function getWatchTimeScore(v) {
+  return v.opportunity?.watchTime ?? Math.round(getOpportunityScore(v) * 0.6);
 }
 
 function getRevenueScore(v) {
@@ -504,6 +550,11 @@ function renderInsights(filtered) {
     ? `แนะนำอันดับ 1: ${window.app.escapeHtml((top.desc || 'Untitled').substring(0, 54))} | ${top.opportunity?.recommendedAction || 'เลือกจากคะแนนมูลค่าสูงสุด'}`
     : 'ไม่มีคลิปที่ผ่านตัวกรองตอนนี้';
 
+  const stageLabel = results[0]?.opportunity?.stageLabel || '';
+  const avgWT = results.length
+    ? Math.round(results.reduce((sum, v) => sum + getWatchTimeScore(v), 0) / results.length)
+    : 0;
+
   el.innerHTML = `
     <div class="insight-card">
       <span class="insight-value">${filtered.length}</span>
@@ -521,15 +572,15 @@ function renderInsights(filtered) {
       <span class="insight-value">${premium}</span>
       <span class="insight-label">พรีเมียม</span>
     </div>
-    <div class="insight-card warning">
-      <span class="insight-value">${avgSeo}</span>
-      <span class="insight-label">SEO เฉลี่ย</span>
+    <div class="insight-card" title="Watch Time potential เฉลี่ย">
+      <span class="insight-value">${avgWT}</span>
+      <span class="insight-label">⏱ Watch Time</span>
     </div>
     <div class="insight-card danger">
       <span class="insight-value">${duplicates + blocked}</span>
       <span class="insight-label">เสีย quota</span>
     </div>
-    <div class="insight-recommendation" id="selection-summary">${topText}</div>`;
+    <div class="insight-recommendation" id="selection-summary">${stageLabel ? `<span class="stage-pill" style="margin-right:6px">${window.app.escapeHtml(stageLabel)}</span>` : ''}${topText}</div>`;
 }
 
 function renderResults(filtered = results) {
@@ -560,13 +611,19 @@ function renderResults(filtered = results) {
           <span class="quality-pill ${qualityClass}">Value ${score}</span>
           <span class="value-mini-pill">รายได้ ${getRevenueScore(v)}</span>
           <span class="value-mini-pill">ผู้ติดตาม ${getFollowerScore(v)}</span>
-          <span class="value-mini-pill">SEO ${getSeoScore(v)}</span>
+          <span class="value-mini-pill wt-pill" title="Watch Time potential">⏱ ${getWatchTimeScore(v)}</span>
+          ${opportunity.stageLabel ? `<span class="stage-pill">${window.app.escapeHtml(opportunity.stageLabel)}</span>` : ''}
           ${opportunity.intent ? `<span class="intent-pill">${window.app.escapeHtml(opportunity.intent)}</span>` : ''}
           ${v.matchedKeywords?.length ? `<span class="matched-keywords">${v.matchedKeywords.map(k => window.app.escapeHtml(k)).join(', ')}</span>` : ''}
         </div>
         <div class="tiktok-video-title">
           <a href="${window.app.escapeHtml(v.videoUrl)}" target="_blank" rel="noopener" class="tiktok-source-link" title="ดูต้นทางบน TikTok">${window.app.escapeHtml((v.desc||'').substring(0,100))}</a>
         </div>
+        ${v.videoUrl ? `
+        <div class="tiktok-source-url">
+          <a href="${window.app.escapeHtml(v.videoUrl)}" target="_blank" rel="noopener" class="url-text" title="${window.app.escapeHtml(v.videoUrl)}">${truncateUrl(v.videoUrl)}</a>
+          <button class="copy-url-btn" title="คัดลอก URL" onclick="event.stopPropagation();navigator.clipboard.writeText('${window.app.escapeHtml(v.videoUrl)}').then(()=>window.app.showToast('คัดลอก URL แล้ว','success'))">📋</button>
+        </div>` : ''}
         ${opportunity.angle ? `<div class="opportunity-angle">${window.app.escapeHtml(opportunity.angle)}</div>` : ''}
         <div class="tiktok-video-meta">
           <span>@${window.app.escapeHtml(v.author)}</span>
@@ -650,11 +707,12 @@ function selectRecommended() {
   const candidates = currentVisibleResults
     .filter(v => !v.alreadyUploaded && v.monetizationStatus !== 'blocked')
     .sort((a, b) => {
-      const scoreDiff = getOpportunityScore(b) - getOpportunityScore(a);
+      // ★ เรียงตาม stageLabel — early_stage เน้น follower+watchTime, อื่นๆ เน้น opportunity
+      const aScore = (getOpportunityScore(a) * 0.5) + (getFollowerScore(a) * 0.25) + (getWatchTimeScore(a) * 0.25);
+      const bScore = (getOpportunityScore(b) * 0.5) + (getFollowerScore(b) * 0.25) + (getWatchTimeScore(b) * 0.25);
+      const scoreDiff = bScore - aScore;
       if (scoreDiff !== 0) return scoreDiff;
-      const seoDiff = getSeoScore(b) - getSeoScore(a);
-      if (seoDiff !== 0) return seoDiff;
-      return getRevenueScore(b) - getRevenueScore(a);
+      return getWatchTimeScore(b) - getWatchTimeScore(a);
     });
 
   if (candidates.length === 0) {
@@ -740,11 +798,11 @@ async function _downloadFileToBrowser(videoUrl, suggestedFilename, btnEl) {
 
   try {
     // POST → server downloads no-watermark → streams back
-    const res = await fetch('/api/tiktok/download-to-browser', {
+    const res = await fetchWithTimeout('/api/tiktok/download-to-browser', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videoUrl, filename: suggestedFilename })
-    });
+    }, 90000); // 90 วิ — DL + stream
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -771,7 +829,8 @@ async function _downloadFileToBrowser(videoUrl, suggestedFilename, btnEl) {
     window.app.showToast(`💾 บันทึก ${filename} สำเร็จ`, 'success');
 
   } catch (err) {
-    window.app.showToast(`❌ Save ล้มเหลว: ${err.message}`, 'error');
+    if (err.name === 'AbortError') window.app.showToast('❌ Save timeout — ลองใหม่', 'error');
+    else window.app.showToast(`❌ Save ล้มเหลว: ${err.message}`, 'error');
     console.error('Save to computer error:', err);
   } finally {
     if (btnEl) {
@@ -818,14 +877,14 @@ async function batchSaveToComputer() {
 
   const resEl = document.getElementById('tiktok-batch-results');
   resEl.style.display = 'block';
-  resEl.innerHTML = `<div style="padding:8px 0;font-weight:600;">💾 กำลัง Save ${selected.length} ไฟล์...</div>`;
+  resEl.innerHTML = `<div class="batch-save-header">💾 กำลัง Save ${selected.length} ไฟล์...</div>`;
 
   let done = 0, failed = 0;
 
   for (const v of selected) {
     const suggested = (v.desc || `tiktok_${v.id || Date.now()}`).substring(0, 60).replace(/[^\w\s\-ก-๙]/g, '');
     try {
-      resEl.innerHTML += `<div class="drop-result-item" id="save-${v.id || done}">⏳ ${window.app.escapeHtml((v.desc||'').substring(0,50))}...</div>`;
+      resEl.innerHTML += `<div class="drop-result-item" style="background:#fafafa;border-color:#e4e7ec;color:var(--text-secondary);" id="save-${v.id || done}">⏳ ${window.app.escapeHtml((v.desc||'').substring(0,55))}...</div>`;
 
       const res = await fetch('/api/tiktok/download-to-browser', {
         method: 'POST',
@@ -851,12 +910,19 @@ async function batchSaveToComputer() {
 
       done++;
       const el = document.getElementById(`save-${v.id || done - 1}`);
-      if (el) el.innerHTML = `✅ ${window.app.escapeHtml((v.desc||'').substring(0,50))} — ${filename}`;
+      if (el) {
+        el.style.cssText = '';
+        el.innerHTML = `✅ ${window.app.escapeHtml((v.desc||'').substring(0,55))} — ${filename}`;
+      }
 
     } catch (err) {
       failed++;
       const el = document.getElementById(`save-${v.id || done}`);
-      if (el) el.innerHTML = `<span class="error">❌ ${window.app.escapeHtml((v.desc||'').substring(0,50))} — ${err.message}</span>`;
+      if (el) {
+        el.classList.add('error');
+        el.style.cssText = '';
+        el.innerHTML = `❌ ${window.app.escapeHtml((v.desc||'').substring(0,55))} — ${err.message}`;
+      }
     }
 
     if (btn) btn.textContent = `⏳ ${done + failed}/${selected.length}`;
@@ -876,12 +942,15 @@ async function dlUpUrl() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
   try {
     window.app.showToast('กำลังดาวน์โหลด+อัป...', 'info');
-    const res = await fetch('/api/tiktok/download-and-upload', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({videoUrl:url}) });
+    const res = await fetchWithTimeout('/api/tiktok/download-and-upload',
+      { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({videoUrl:url}) },
+      120000); // 2 นาที — DL + upload
     const d = await res.json();
     if (d.success) { window.app.showToast('อัปโหลดสำเร็จ!', 'success'); showResult(d); }
     else { window.app.showToast(d.error || 'เกิดข้อผิดพลาด', 'error'); }
   } catch(err) {
-    window.app.showToast('Network error: ' + err.message, 'error');
+    if (err.name === 'AbortError') window.app.showToast('Timeout — ดาวน์โหลด/อัปใช้เวลานานเกินไป', 'error');
+    else window.app.showToast('Network error: ' + err.message, 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'โหลด+อัป YouTube'; }
   }
@@ -889,14 +958,16 @@ async function dlUpUrl() {
 
 async function dlUpSingle(idx) {
   const v = results[idx]; if (!v) return;
-  // Find button and disable it
   const btn = document.querySelector(`.tiktok-cb[data-idx="${idx}"]`)
     ?.closest('.tiktok-video-item')
     ?.querySelector('button[onclick*="dlUp"]');
   if (btn) { btn.disabled = true; btn.textContent = '⏳...'; }
   try {
     window.app.showToast('กำลังดำเนินการ...', 'info');
-    const res = await fetch('/api/tiktok/download-and-upload', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({videoUrl:v.videoUrl, title:(v.desc||'').substring(0,100), desc:v.desc, author:v.author, duration:v.duration}) });
+    const res = await fetchWithTimeout('/api/tiktok/download-and-upload',
+      { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({videoUrl:v.videoUrl, title:(v.desc||'').substring(0,100), desc:v.desc, author:v.author, duration:v.duration}) },
+      120000);
     const d = await res.json();
     if (d.success) {
       window.app.showToast('สำเร็จ!', 'success');
@@ -909,7 +980,8 @@ async function dlUpSingle(idx) {
       if (btn) { btn.disabled = false; btn.textContent = 'อัป YouTube'; }
     }
   } catch(err) {
-    window.app.showToast('Network error: ' + err.message, 'error');
+    if (err.name === 'AbortError') window.app.showToast('Timeout — ลองใหม่', 'error');
+    else window.app.showToast('Network error: ' + err.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'อัป YouTube'; }
   }
 }
@@ -1046,7 +1118,10 @@ async function previewSmartBatch(selected) {
 function trackProgress() {
   const el = document.getElementById('tiktok-progress'); el.style.display='block';
   const resEl = document.getElementById('tiktok-batch-results'); resEl.style.display='block'; resEl.innerHTML='';
+  // ★ ปิด SSE เก่าก่อนเปิดใหม่ ป้องกัน duplicate connections
+  if (_activeBatchSSE) { try { _activeBatchSSE.close(); } catch(_) {} }
   const es = new EventSource('/api/tiktok/progress');
+  _activeBatchSSE = es;
   es.onmessage = (e) => {
     let d;
     try { d = JSON.parse(e.data); } catch (_) { return; } // skip malformed frames
@@ -1055,13 +1130,14 @@ function trackProgress() {
     document.getElementById('tiktok-progress-file').textContent = d.currentFile||'';
     document.getElementById('tiktok-progress-fill').style.width = (d.total>0?(d.current/d.total)*100:0)+'%';
     if (d.results) resEl.innerHTML = d.results.map(r => {
-      if (r.skipped && r.blocked) return `<div class="drop-result-item error">🚫 ${window.app.escapeHtml(r.title.substring(0,50))} — ${window.app.escapeHtml(r.error)}</div>`;
-      if (r.skipped) return `<div class="drop-result-item">⏭️ ${window.app.escapeHtml(r.title.substring(0,50))} — ${window.app.escapeHtml(r.error)}</div>`;
-      if (r.success) return `<div class="drop-result-item">✅ ${window.app.escapeHtml(r.title.substring(0,50))} → <a href="${r.youtubeUrl}" target="_blank">YouTube</a></div>`;
-      return `<div class="drop-result-item error">❌ ${window.app.escapeHtml(r.title.substring(0,50))} — ${window.app.escapeHtml(r.error||'')}</div>`;
+      if (r.skipped && r.blocked) return `<div class="drop-result-item error">🚫 ${window.app.escapeHtml(r.title.substring(0,55))} — ${window.app.escapeHtml(r.error)}</div>`;
+      if (r.skipped) return `<div class="drop-result-item" style="background:#fafafa;border-color:#e4e7ec;color:var(--text-muted);">⏭️ ${window.app.escapeHtml(r.title.substring(0,55))} — ข้ามแล้ว</div>`;
+      if (r.success) return `<div class="drop-result-item">✅ ${window.app.escapeHtml(r.title.substring(0,55))} → <a href="${r.youtubeUrl}" target="_blank">YouTube ↗</a></div>`;
+      return `<div class="drop-result-item error">❌ ${window.app.escapeHtml(r.title.substring(0,55))} — ${window.app.escapeHtml(r.error||'')}</div>`;
     }).join('');
     if (d.status==='done') { 
-      es.close(); 
+      es.close();
+      _activeBatchSSE = null;
       document.getElementById('tiktok-progress').style.display = 'none';
       // Refresh current mode to show updated upload status
       if (currentMode === 'trending') fetchTrending();
@@ -1069,12 +1145,27 @@ function trackProgress() {
       else search();
     }
   };
-  es.onerror = () => { es.close(); el.style.display='none'; };
+  es.onerror = () => { es.close(); _activeBatchSSE = null; el.style.display='none'; };
 }
 
 function showResult(d) {
   const el = document.getElementById('tiktok-batch-results'); el.style.display='block';
-  el.innerHTML += `<div class="drop-result-item">✅ ${window.app.escapeHtml(d.filename||'')} → <a href="${d.youtubeUrl}" target="_blank">${d.youtubeUrl}</a></div>`;
+  el.innerHTML += `<div class="drop-result-item">✅ ${window.app.escapeHtml(d.filename||'')} → <a href="${d.youtubeUrl}" target="_blank">YouTube ↗</a></div>`;
+}
+
+function truncateUrl(url) {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    // แสดง: tiktok.com/@user/video/12345
+    const parts = u.pathname.split('/').filter(Boolean);
+    const short = parts.length >= 3
+      ? `${parts[0]}/${parts[1]}/${parts[2]}`  // @user/video/id
+      : u.pathname;
+    return `${u.hostname}/${short}`;
+  } catch {
+    return url.length > 45 ? url.substring(0, 42) + '…' : url;
+  }
 }
 
 function fmtCount(n) { if (!n) return '0'; if (n>=1e6) return (n/1e6).toFixed(1)+'M'; if (n>=1e3) return (n/1e3).toFixed(1)+'K'; return n.toString(); }
@@ -1126,13 +1217,34 @@ async function seoPreview(idx) {
         ${warnings.length ? `<div><strong>ต้องระวัง</strong>${warnings.map(w => `<span>${window.app.escapeHtml(w)}</span>`).join('')}</div>` : ''}
         ${checks.length ? `<div><strong>SEO checks</strong>${checks.slice(0, 3).map(c => `<span>${window.app.escapeHtml(c.message)}</span>`).join('')}</div>` : ''}
       </div>`;
-    el.appendChild(panel);
+    // ใส่ panel ใน tiktok-video-info เพื่อให้ span ถูก column ใน grid
+    const infoEl = el.querySelector('.tiktok-video-info');
+    (infoEl || el).appendChild(panel);
   } catch (err) {
     window.app.showToast('SEO preview error: ' + err.message, 'error');
   }
 }
 
 window.tiktokPage = { dlUp: dlUpSingle, seoPreview, saveToComputer };
+
+// ★ Cleanup — ปิด SSE connections ทั้งหมดเมื่อ navigate ออกจากหน้า
+export function cleanup() {
+  // ปิด batch upload SSE
+  if (typeof _activeBatchSSE !== 'undefined' && _activeBatchSSE) {
+    try { _activeBatchSSE.close(); } catch (_) {}
+    _activeBatchSSE = null;
+  }
+  // ปิด watchlist SSE
+  if (_wlSSE) {
+    try { _wlSSE.close(); } catch (_) {}
+    _wlSSE = null;
+  }
+  // ล้าง URL check timer
+  if (urlCheckTimer) {
+    clearTimeout(urlCheckTimer);
+    urlCheckTimer = null;
+  }
+}
 
 // ══════════════════════════════════════════════════════════════
 // WATCHLIST PANEL
@@ -1184,6 +1296,7 @@ async function loadWatchlist() {
     const d = await r.json();
     renderWatchlistStats(d.stats);
     renderWatchlistList(d.keywords);
+    renderProviderStats();
   } catch(e) {
     document.getElementById('watchlist-list').innerHTML = '<p class="empty-state">โหลดไม่ได้</p>';
   }
@@ -1232,12 +1345,28 @@ function renderWatchlistList(keywords) {
         </label>
         <div class="watchlist-item-info">
           <span class="watchlist-keyword">${window.app.escapeHtml(kw.keyword)}</span>
-          <span class="watchlist-meta">
-            ${kw.countPerRun} คลิป/รอบ
-            · คะแนน ≥${kw.minScore}
-            · อัปแล้ว ${kw.totalUploaded || 0} คลิป
-            ${kw.lastRunAt ? `· รันล่าสุด ${window.app.timeAgo(kw.lastRunAt)}` : '· ยังไม่ได้รัน'}
-          </span>
+          <div class="watchlist-meta-row">
+            <span class="watchlist-meta-pill" title="คลิปต่อรอบ">
+              📦
+              <select class="wl-inline-select wl-count-select" data-id="${kw.id}" data-field="countPerRun">
+                ${[4,6,8,12,18].map(n => `<option value="${n}" ${kw.countPerRun==n?'selected':''}>${n}/รอบ</option>`).join('')}
+              </select>
+            </span>
+            <span class="watchlist-meta-pill" title="คะแนนขั้นต่ำ">
+              🎯
+              <select class="wl-inline-select wl-score-select" data-id="${kw.id}" data-field="minScore">
+                <option value="0" ${kw.minScore==0?'selected':''}>ทั้งหมด</option>
+                <option value="52" ${kw.minScore==52?'selected':''}>52+</option>
+                <option value="68" ${kw.minScore==68?'selected':''}>68+</option>
+                <option value="82" ${kw.minScore==82?'selected':''}>82+</option>
+              </select>
+            </span>
+            <span class="watchlist-meta">
+              อัปแล้ว <strong>${kw.totalUploaded || 0}</strong>
+              ${(kw.totalFound || 0) > 0 ? `· พบ ${kw.totalFound} · pass ${kw.totalFound > 0 ? Math.round((kw.totalUploaded||0)/kw.totalFound*100) : 0}%` : ''}
+              ${kw.lastRunAt ? `· ${window.app.timeAgo(kw.lastRunAt)}` : '· ยังไม่รัน'}
+            </span>
+          </div>
         </div>
       </div>
       <button class="btn btn-danger btn-sm wl-delete" data-id="${kw.id}">ลบ</button>
@@ -1256,6 +1385,20 @@ function renderWatchlistList(keywords) {
     });
   });
 
+  // Inline edit — countPerRun & minScore
+  el.querySelectorAll('.wl-inline-select').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const field = sel.dataset.field;
+      const val = parseInt(sel.value);
+      await fetch(`/api/watchlist/${sel.dataset.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: val })
+      });
+      window.app.showToast('อัปเดตแล้ว', 'success');
+    });
+  });
+
   // Delete
   el.querySelectorAll('.wl-delete').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -1265,6 +1408,39 @@ function renderWatchlistList(keywords) {
       loadWatchlist();
     });
   });
+}
+
+async function renderProviderStats() {
+  const el = document.getElementById('watchlist-provider-stats');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/tiktok/provider-stats');
+    const data = await r.json();
+    const providers = Object.entries(data);
+    if (!providers.length) return;
+    el.style.display = 'block';
+    el.innerHTML = `
+      <div class="provider-stats-header">
+        <span>Download Provider Reliability</span>
+        <button class="provider-stats-refresh" onclick="renderProviderStats()" title="รีเฟรช">↻</button>
+      </div>
+      <div class="provider-stats-grid">
+        ${providers.map(([name, s]) => {
+          const rate = s.successRate ?? 0;
+          const cls = rate >= 80 ? 'ok' : rate >= 50 ? 'warn' : s.total === 0 ? 'unknown' : 'bad';
+          const bar = s.total > 0 ? Math.round(rate) : 0;
+          return `
+          <div class="provider-stat-card provider-${cls}">
+            <div class="provider-stat-name">${name}</div>
+            <div class="provider-stat-rate">${s.total > 0 ? rate.toFixed(0) + '%' : '—'}</div>
+            <div class="provider-stat-bar-track">
+              <div class="provider-stat-bar-fill" style="width:${bar}%"></div>
+            </div>
+            <div class="provider-stat-detail">${s.success}✓ ${s.failure}✗</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  } catch(_) {}
 }
 
 async function addWatchlistKeyword() {

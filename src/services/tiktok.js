@@ -118,21 +118,31 @@ class TikTokService {
    * Fetch a tikwm URL through the shared throttle, retrying on the
    * "Free Api Limit: 1 request/second" response (code: -1) with
    * exponential backoff instead of treating it as "no results".
+   * 
+   * ★ CF-block detection: if response is null (HTML/non-JSON) on first
+   * attempt, bail immediately instead of wasting 3 retry rounds.
    */
   async _fetchTikwmWithRetry(url, maxRetries = 3) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const response = await this._throttleTikwm(() => this._fetchJSON(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'Referer': 'https://www.tiktok.com/'
         }
       }));
 
-      const isRateLimited = response && response.code === -1;
+      // null = HTML response (CF challenge) or parse error — no point retrying
+      if (response === null) {
+        logger.warn('tikwm returned non-JSON (CF block?), skipping retries', { url: url.substring(0, 80) });
+        return null;
+      }
+
+      const isRateLimited = response.code === -1;
       if (!isRateLimited) return response;
 
-      logger.warn('tikwm rate limit hit, retrying', { attempt: attempt + 1, url });
-      await this._delay(1200 * (attempt + 1)); // extra backoff on top of the throttle
+      logger.warn('tikwm rate limit hit, retrying', { attempt: attempt + 1, url: url.substring(0, 80) });
+      await this._delay(1200 * (attempt + 1));
     }
     return null;
   }
@@ -251,16 +261,16 @@ class TikTokService {
     try {
       const collected = [];
       const seenIds = new Set();
-      // tikwm's feed/list doesn't paginate reliably by count, so we just
-      // request once through the throttle/retry pipeline.
       const url = `https://www.tikwm.com/api/feed/list?region=${encodeURIComponent(region)}&count=${count}`;
       const response = await this._fetchTikwmWithRetry(url);
 
       if (response && response.code === 0) {
-        // tikwm feed/list can return videos in data[] or data.videos[]
+        // tikwm feed/list returns data[] directly (not data.videos[])
         const videoList = Array.isArray(response.data)
           ? response.data
-          : (Array.isArray(response.data?.videos) ? response.data.videos : []);
+          : Array.isArray(response.data?.videos)
+            ? response.data.videos
+            : [];
 
         for (const video of videoList) {
           const id = video.video_id || video.id;
@@ -280,8 +290,8 @@ class TikTokService {
 
   /**
    * Fetch the most recent videos posted by a specific creator (by
-   * @username). Useful for tracking creators whose content performs
-   * well and re-uploading their newest clips as soon as they post.
+   * @username). Uses tikwm user/posts endpoint with fallback to
+   * feed/search by username if Cloudflare blocks the direct call.
    */
   async getCreatorVideos(username, count = 12) {
     const handle = (username || '').replace(/^@/, '').trim();
@@ -289,41 +299,75 @@ class TikTokService {
 
     logger.info('Fetching TikTok creator videos', { username: handle, count });
 
+    // Strategy 1: tikwm user/posts (may be CF-blocked)
     try {
-      const collected = [];
-      const seenIds = new Set();
-      let cursor = 0;
-      let page = 0;
-      const maxPages = 4;
-
-      while (collected.length < count && page < maxPages) {
-        const url = `https://www.tikwm.com/api/user/posts?unique_id=${encodeURIComponent(handle)}&count=${count}&cursor=${cursor}`;
-        const response = await this._fetchTikwmWithRetry(url);
-
-        if (!response || response.code !== 0 || !response.data || !Array.isArray(response.data.videos)) {
-          break;
-        }
-
-        for (const video of response.data.videos) {
-          const id = video.video_id || video.id;
-          if (!id || seenIds.has(id)) continue;
-          seenIds.add(id);
-          collected.push(this._mapVideo(video));
-        }
-
-        page++;
-        const hasMore = response.data.hasMore;
-        const nextCursor = response.data.cursor;
-        if (!hasMore || nextCursor === undefined || nextCursor === cursor) break;
-        cursor = nextCursor;
+      const result = await this._fetchCreatorViaUserPosts(handle, count);
+      if (result.length > 0) {
+        logger.info('Creator fetch via user/posts completed', { username: handle, found: result.length });
+        return result;
       }
-
-      logger.info('Creator fetch completed', { username: handle, found: collected.length });
-      return collected.slice(0, count);
     } catch (error) {
-      logger.error('TikTok creator fetch error', { username: handle, error: error.message });
+      logger.warn('Creator user/posts failed, trying search fallback', { username: handle, error: error.message });
+    }
+
+    // Strategy 2: feed/search by @username (more resilient, tikwm throttled path)
+    logger.info('Creator fetch fallback: using feed/search', { username: handle });
+    try {
+      const searchQuery = `@${handle}`;
+      const videos = await this._paginatedSearch(searchQuery, count);
+      // Filter to only videos from this creator
+      const filtered = videos.filter(v =>
+        (v.author || '').toLowerCase() === handle.toLowerCase()
+      );
+      const result = filtered.length > 0 ? filtered : videos.slice(0, count);
+      logger.info('Creator fetch via search fallback completed', { username: handle, found: result.length });
+      return result;
+    } catch (err) {
+      logger.error('TikTok creator fetch error (all strategies failed)', { username: handle, error: err.message });
       return [];
     }
+  }
+
+  async _fetchCreatorViaUserPosts(handle, count) {
+    const collected = [];
+    const seenIds = new Set();
+    let cursor = 0;
+    let page = 0;
+    const maxPages = 4;
+
+    while (collected.length < count && page < maxPages) {
+      const url = `https://www.tikwm.com/api/user/posts?unique_id=${encodeURIComponent(handle)}&count=${count}&cursor=${cursor}`;
+      const response = await this._fetchTikwmWithRetry(url);
+
+      if (!response || response.code !== 0) {
+        // code -1 or HTML (CF block) — throw to trigger fallback
+        throw new Error(`tikwm user/posts returned code ${response?.code ?? 'non-JSON'}`);
+      }
+
+      // tikwm user/posts may return data as array OR as { videos: [] }
+      const videoList = Array.isArray(response.data)
+        ? response.data
+        : Array.isArray(response.data?.videos)
+          ? response.data.videos
+          : [];
+
+      if (videoList.length === 0) break;
+
+      for (const video of videoList) {
+        const id = video.video_id || video.id;
+        if (!id || seenIds.has(id)) continue;
+        seenIds.add(id);
+        collected.push(this._mapVideo(video));
+      }
+
+      page++;
+      const hasMore = response.data?.hasMore;
+      const nextCursor = response.data?.cursor;
+      if (!hasMore || nextCursor === undefined || nextCursor === cursor) break;
+      cursor = nextCursor;
+    }
+
+    return collected.slice(0, count);
   }
 
   /**
@@ -599,6 +643,12 @@ class TikTokService {
         file.on('finish', () => {
           file.close(resolve);
         });
+        // ★ Handle disk I/O errors — ป้องกัน silent hang และ partial file
+        file.on('error', (err) => {
+          try { file.close(); } catch (_) {}
+          try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
+          reject(new Error(`Disk write error: ${err.message}`));
+        });
       });
 
       request.on('error', (err) => {
@@ -650,7 +700,7 @@ class TikTokService {
       });
 
       req.on('error', reject);
-      req.setTimeout(15000, () => {
+      req.setTimeout(8000, () => {
         req.destroy();
         reject(new Error('Request timeout'));
       });

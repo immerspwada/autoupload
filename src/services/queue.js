@@ -70,13 +70,24 @@ class UploadQueue extends EventEmitter {
   }
 
   async _runTask(item) {
+    // ★ Per-task timeout — ป้องกัน upload หยุดค้างตลอด (default 15 นาที)
+    const TASK_TIMEOUT_MS = 15 * 60 * 1000;
+    let timeoutHandle;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error(`Task timeout after ${TASK_TIMEOUT_MS / 60000} minutes`));
+      }, TASK_TIMEOUT_MS);
+    });
+
     try {
-      const result = await item.task();
+      const result = await Promise.race([item.task(), timeoutPromise]);
+      clearTimeout(timeoutHandle);
       item.status = 'done';
       item.result = result;
       this.emit('completed', { id: item.id, result, filename: item.filename });
       logger.info('Queue item completed', { id: item.id, filename: item.filename });
     } catch (err) {
+      clearTimeout(timeoutHandle);
       item.retries++;
       if (item.retries < this.maxRetries) {
         item.error = err.message;

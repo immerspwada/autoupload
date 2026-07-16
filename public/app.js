@@ -52,6 +52,11 @@ function initNav() {
 async function navigate(path) {
   if (!path || !ROUTES[path]) path = '/';
 
+  // ★ Cleanup previous page — ปิด SSE/EventSource และ timers ก่อนเปลี่ยนหน้า
+  if (currentPage && typeof currentPage.cleanup === 'function') {
+    try { currentPage.cleanup(); } catch (_) {}
+  }
+
   // Update URL hash
   if (location.hash !== '#' + path) {
     history.pushState(null, '', '#' + path);
@@ -87,6 +92,13 @@ function initWebSocket() {
 
 function handleWS({ type, data }) {
   switch (type) {
+    case 'tiktok:downloaded':
+      // อัปเดต counter ใน status bar ถ้ามี
+      (function() {
+        const el = document.getElementById('sb-dl-count');
+        if (el) el.textContent = (parseInt(el.textContent || '0') + 1) + ' วันนี้';
+      })();
+      break;
     case 'notification':
       showToast(`${data.title}: ${data.message}`, data.level === 'error' ? 'error' : data.level === 'success' ? 'success' : 'info');
       if (data.level === 'error' || data.level === 'success') sendDesktopNotif(data.title, data.message);
@@ -161,17 +173,25 @@ function updateStatusBar(data) {
   // Queue status
   const qEl = document.querySelector('#sb-queue .sb-text');
   const qContainer = document.getElementById('sb-queue');
+  const qPauseBtn = document.getElementById('sb-queue-pause');
   if (qEl && data.queue) {
     const p = data.queue.pending||0, pr = data.queue.processing||0;
-    if (pr > 0) {
-      qEl.textContent = `กำลังอัป ${pr} | รอ ${p}`;
-      qContainer.classList.add('queue-active');
-    } else if (p > 0) {
-      qEl.textContent = `รอ ${p} คลิป`;
-      qContainer.classList.remove('queue-active');
+    const paused = data.queue.paused || false;
+    if (pr > 0 || p > 0) {
+      qEl.textContent = paused
+        ? `⏸ หยุดชั่วคราว | รอ ${p}`
+        : `กำลังอัป ${pr} | รอ ${p}`;
+      qContainer.classList.toggle('queue-active', !paused && pr > 0);
+      qContainer.classList.toggle('queue-paused', paused);
+      if (qPauseBtn) {
+        qPauseBtn.style.display = 'inline-flex';
+        qPauseBtn.textContent = paused ? '▶' : '⏸';
+        qPauseBtn.title = paused ? 'เริ่มคิวต่อ' : 'หยุดคิวชั่วคราว';
+      }
     } else {
       qEl.textContent = 'คิวว่าง';
-      qContainer.classList.remove('queue-active');
+      qContainer.classList.remove('queue-active', 'queue-paused');
+      if (qPauseBtn) qPauseBtn.style.display = 'none';
     }
   }
   
@@ -263,10 +283,10 @@ document.getElementById('upload-form').addEventListener('submit', async (e) => {
   const filename = document.getElementById('upload-filename').value;
   const body = { filename, title: document.getElementById('upload-title').value, description: document.getElementById('upload-description').value, tags: document.getElementById('upload-tags').value, privacy: document.getElementById('upload-privacy').value };
   closeModal(); showToast(`อัปโหลด ${filename}...`, 'info');
-  const res = await fetch('/api/upload', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const res = await fetch('/api/upload/single', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const data = await res.json();
   if (data.success) { showToast('อัปโหลดสำเร็จ!', 'success'); if (currentPage && currentPage.init) currentPage.init(); }
-  else showToast(data.error, 'error');
+  else showToast(data.error || 'อัปโหลดล้มเหลว', 'error');
 });
 
 // ==================== KEYBOARD SHORTCUTS ====================
@@ -311,9 +331,23 @@ function timeAgo(dateStr) {
 }
 
 // ==================== GLOBAL EXPORTS ====================
-window.app = { showToast, escapeHtml, formatFileSize, timeAgo, openUploadModal, login, logout: doLogout, navigate };
+window.app = { showToast, escapeHtml, formatFileSize, timeAgo, openUploadModal, login, logout: doLogout, navigate, toggleQueuePause };
 window.closeModal = closeModal;
 window.runCleanup = runCleanup;
+
+async function toggleQueuePause() {
+  const btn = document.getElementById('sb-queue-pause');
+  const isPaused = btn && btn.textContent === '▶';
+  try {
+    const endpoint = isPaused ? '/api/upload/queue/resume' : '/api/upload/queue/pause';
+    await fetch(endpoint, { method: 'POST' });
+    showToast(isPaused ? 'เริ่มคิวต่อแล้ว' : 'หยุดคิวชั่วคราวแล้ว', 'success');
+    // สถานะจะอัปเดตผ่าน WebSocket system:status
+    setTimeout(loadHealthStatus, 500);
+  } catch(e) {
+    showToast('ไม่สามารถเปลี่ยนสถานะคิวได้', 'error');
+  }
+}
 
 async function login() { const r=await fetch('/api/auth/login'); const d=await r.json(); if(d.url) location.href=d.url; else showToast(d.error,'error'); }
 async function doLogout() { await fetch('/api/auth/logout',{method:'POST'}); document.getElementById('channel-info').style.display='none'; checkAuth(); showToast('ออกจากระบบ','info'); }

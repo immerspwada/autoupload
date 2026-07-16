@@ -100,7 +100,38 @@ const MONETIZATION_RISK_KEYWORDS = {
   ]
 };
 
-// Common filler words to clean from titles
+// ── Channel Growth Stages ──────────────────────────────────────────
+// ระยะของช่อง กำหนด weight ในการคำนวณ opportunity score
+// early_stage: <1000 subs → เน้น subscriber + watch time
+// pre_ypp:     1000+ subs → เน้น watch hours ให้ครบ 4000
+// monetized:   ผ่าน YPP แล้ว → เน้นรายได้ (default เดิม)
+const CHANNEL_STAGES = {
+  early_stage: { revenue: 0.15, follower: 0.50, watchTime: 0.35, label: 'เน้นผู้ติดตาม' },
+  pre_ypp:     { revenue: 0.20, follower: 0.35, watchTime: 0.45, label: 'เน้น Watch Hours' },
+  monetized:   { revenue: 0.36, follower: 0.32, watchTime: 0.32, label: 'เน้นรายได้' },
+};
+
+// Content types ที่ดีสำหรับ watch time สูง (คนดูจนจบ)
+const WATCH_TIME_SIGNALS = {
+  boost: [
+    // Tutorial/How-to — คนดูจนจบเพราะรอคำตอบ
+    'วิธี', 'สอน', 'tutorial', 'howto', 'how to', 'tips', 'เทคนิค', 'สูตร', 'recipe',
+    // Story-driven — มี narrative ทำให้ดูจนจบ
+    'เรื่องราว', 'ประสบการณ์', 'เล่า', 'เปิดเผย', 'ความจริง',
+    // Series / episodic
+    'ตอนที่', 'ep', 'part', 'series',
+    // Challenge / transformation — รอดูผล
+    'before after', 'challenge', 'transformation', 'เปลี่ยน',
+    // List content — คนดูจนครบ list
+    'อันดับ', 'top', 'ranking', '10 อย่าง', '5 วิธี',
+  ],
+  penalty: [
+    // Dance-only ไม่มีเนื้อหา — คนออกเร็ว
+    'lip sync', 'lipstick',
+  ]
+};
+
+// VALUE_INTENTS + watch time weight
 const FILLER_WORDS = ['fyp', 'foryou', 'foryoupage', 'viral', 'trending', 'xyzbca', 'tiktok', '#'];
 
 const VALUE_INTENTS = [
@@ -139,6 +170,26 @@ const VALUE_INTENTS = [
     follower: 18,
     seo: 8,
     angle: 'เหมาะกับเพิ่ม reach และผู้ติดตาม แต่ควรเพิ่มบริบท/keyword เพื่อไม่ให้เป็น reused-content บางเกินไป'
+  },
+  {
+    id: 'watch_time_builder',
+    label: 'สะสม Watch Time',
+    keywords: [
+      // narrative / story — คนดูจนจบรอตอนจบ
+      'เรื่องราว', 'เล่า', 'ประสบการณ์', 'ความจริง', 'เปิดเผย', 'เซอร์ไพรส์',
+      // list / countdown — คนดูเพราะอยากรู้ครบ list
+      'อันดับ', 'top', 'ranking', '10 อย่าง', '5 วิธี', '3 เหตุผล',
+      // transformation / before-after — รอดูผล
+      'transformation', 'before after', 'เปลี่ยน', 'ผลลัพธ์', 'กี่วัน',
+      // series / episodic — ติดตามตอนต่อไป
+      'ตอนที่', 'ep', 'part 1', 'part 2', 'series',
+      // challenge — รอดูว่าทำได้ไหม
+      'challenge', 'ทำได้ไหม', 'ลอง', 'ท้าทาย'
+    ],
+    revenue: 10,
+    follower: 22,
+    seo: 15,
+    angle: 'คลิปประเภทนี้คนดูนานกว่าค่าเฉลี่ย — เพิ่ม hook ใน 5 วิแรกและ CTA กลางคลิปเพื่อดึงให้ดูจนจบ'
   }
 ];
 
@@ -153,9 +204,11 @@ class SEOService {
    */
   generateMetadata(tiktokData, options = {}) {
     const config = this._getConfig();
+    // ★ channelStage จาก options หรือ config (settings.json)
+    const channelStage = options.channelStage || config.channelStage || 'early_stage';
     
     const title = this.generateTitle(tiktokData, config);
-    const description = this.generateDescription(tiktokData, config);
+    const description = this.generateDescription(tiktokData, config, { channelStage });
     const tags = this.generateTags(tiktokData, config);
     const categoryId = this.detectCategory(tiktokData);
     const publishAt = options.schedulePublish ? this.getOptimalPublishTime() : null;
@@ -319,12 +372,16 @@ class SEOService {
   }
 
   /**
-   * Score business opportunity before uploading:
-   * - revenue: chance to create ad/affiliate value
-   * - follower: chance to convert viewers into subscribers
-   * - seo: chance to rank/search beyond a one-off viral spike
+   * Score business opportunity before uploading.
+   * รองรับ channelStage: 'early_stage' | 'pre_ypp' | 'monetized'
+   * - early_stage: เน้น follower + watch time (ยังไม่ผ่าน YPP)
+   * - pre_ypp:     เน้น watch time + follower (รอ 4000 ชม.)
+   * - monetized:   เน้น revenue (default เดิม)
    */
   analyzeOpportunity(tiktokData, options = {}) {
+    const channelStage = options.channelStage || 'monetized';
+    const stageWeights = CHANNEL_STAGES[channelStage] || CHANNEL_STAGES.monetized;
+
     const text = [
       tiktokData.desc,
       tiktokData.title,
@@ -350,6 +407,7 @@ class SEOService {
     let revenue = 20;
     let follower = 20;
     let seo = 18;
+    let watchTime = 20; // ★ ใหม่ — watch time potential score
     const reasons = [];
     const warnings = [];
 
@@ -360,35 +418,52 @@ class SEOService {
       reasons.push(`${intent.label}: ${intent.hits.slice(0, 3).join(', ')}`);
     }
 
-    revenue += Math.min((virality.score || 0) * 0.22, 18);
+    revenue  += Math.min((virality.score || 0) * 0.22, 18);
     follower += Math.min((virality.score || 0) * 0.35, 28);
-    seo += hasUsefulCaption ? 12 : -8;
-    seo += hasHashtags ? 6 : 0;
+    seo      += hasUsefulCaption ? 12 : -8;
+    seo      += hasHashtags ? 6 : 0;
     follower += engagementRate >= 0.08 ? 12 : engagementRate >= 0.04 ? 7 : 0;
-    revenue += views >= 1000000 ? 10 : views >= 100000 ? 6 : views >= 10000 ? 3 : 0;
+    revenue  += views >= 1000000 ? 10 : views >= 100000 ? 6 : views >= 10000 ? 3 : 0;
 
+    // ★ Watch Time scoring
+    // คลิปที่มี narrative/tutorial/list → คนดูนานกว่า
+    const wtBoostHits = WATCH_TIME_SIGNALS.boost.filter(k => text.includes(k.toLowerCase()));
+    const wtPenaltyHits = WATCH_TIME_SIGNALS.penalty.filter(k => text.includes(k.toLowerCase()));
+    watchTime += Math.min(wtBoostHits.length * 10, 35);
+    watchTime -= wtPenaltyHits.length * 8;
+
+    // Duration bonus — ยิ่งนานยิ่งมี watch time สะสม (แต่ไม่นานเกินไป)
+    if (duration >= 60)  { watchTime += 15; reasons.push('คลิปยาว ≥1 นาที — watch time สะสมได้มาก'); }
+    else if (duration >= 30) { watchTime += 8; }
+    else if (duration < 15 && duration > 0) { watchTime -= 10; warnings.push('คลิปสั้นมาก (<15s) watch time น้อย'); }
+
+    // engagement = proxy สำหรับ completion rate
+    watchTime += engagementRate >= 0.08 ? 12 : engagementRate >= 0.04 ? 6 : 0;
+
+    // Tutorial/howto categories
     if ([26, 27, 28].includes(categoryId)) {
-      revenue += 10;
-      seo += 8;
-      reasons.push(`หมวด ${this.getCategoryName(categoryId)} เหมาะกับ search และรายได้`);
+      revenue  += 10;
+      seo      += 8;
+      watchTime += 10; // tutorial categories → คนดูจนจบ
+      reasons.push(`หมวด ${this.getCategoryName(categoryId)} เหมาะกับ search + watch time`);
     } else if ([15, 23, 24].includes(categoryId)) {
       follower += 8;
       reasons.push(`หมวด ${this.getCategoryName(categoryId)} เหมาะกับ reach และผู้ติดตาม`);
     }
 
     if (duration > 0 && duration < 20) {
-      revenue -= 8;
-      seo -= 5;
-      warnings.push('สั้นมาก ควรทำ title/description ให้ชัดเพื่อชดเชยบริบทที่น้อย');
+      revenue  -= 8;
+      seo      -= 5;
     } else if (duration >= 45) {
-      revenue += 5;
-      seo += 4;
+      revenue  += 5;
+      seo      += 4;
     }
 
     if (options.alreadyUploaded || tiktokData.alreadyUploaded) {
-      revenue -= 30;
+      revenue  -= 30;
       follower -= 20;
-      seo -= 20;
+      seo      -= 20;
+      watchTime -= 20;
       warnings.push('เคยอัปแล้ว ไม่ควรใช้ quota ซ้ำ');
     }
 
@@ -396,17 +471,26 @@ class SEOService {
       revenue = Math.min(revenue, 8);
       follower = Math.min(follower, 12);
       seo = Math.min(seo, 8);
+      watchTime = Math.min(watchTime, 8);
       warnings.push('มีความเสี่ยงนโยบายสูง ไม่เหมาะกับ monetization');
     } else if (validation.status === 'warning') {
-      revenue -= 18;
-      seo -= 8;
+      revenue  -= 18;
+      seo      -= 8;
       warnings.push('มีคำเสี่ยง demonetize ควรปรับ metadata หรือข้าม');
     }
 
-    revenue = this._clampScore(revenue);
-    follower = this._clampScore(follower);
-    seo = this._clampScore(seo);
-    const score = Math.round((revenue * 0.36) + (follower * 0.32) + (seo * 0.32));
+    revenue   = this._clampScore(revenue);
+    follower  = this._clampScore(follower);
+    seo       = this._clampScore(seo);
+    watchTime = this._clampScore(watchTime);
+
+    // ★ Weight ตาม channel stage
+    const score = Math.round(
+      (revenue  * stageWeights.revenue)  +
+      (follower * stageWeights.follower) +
+      (watchTime * stageWeights.watchTime)
+    );
+
     const tier = score >= 82 ? 'premium'
       : score >= 68 ? 'growth'
       : score >= 52 ? 'test'
@@ -419,11 +503,14 @@ class SEOService {
       revenue,
       follower,
       seo,
+      watchTime,
+      channelStage,
+      stageLabel: stageWeights.label,
       intent: primaryIntent ? primaryIntent.label : 'ทั่วไป',
-      angle: primaryIntent ? primaryIntent.angle : this._defaultOpportunityAngle(categoryId, virality),
+      angle: primaryIntent ? primaryIntent.angle : this._defaultOpportunityAngle(categoryId, virality, channelStage),
       reasons: reasons.slice(0, 4),
       warnings: warnings.slice(0, 3),
-      recommendedAction: this._opportunityRecommendation(score, validation)
+      recommendedAction: this._opportunityRecommendation(score, validation, channelStage)
     };
   }
 
@@ -467,7 +554,7 @@ class SEOService {
    * Generate SEO-rich description
    * Includes: summary, hashtags as text, source credit, CTA
    */
-  generateDescription(tiktokData, config = null) {
+  generateDescription(tiktokData, config = null, options = {}) {
     config = config || this._getConfig();
     const parts = [];
 
@@ -487,9 +574,19 @@ class SEOService {
       parts.push('');
     }
 
-    // Add engagement CTA
-    parts.push('📌 กดไลค์ กดแชร์ กดติดตาม เพื่อไม่พลาดคลิปใหม่ทุกวัน!');
-    parts.push('🔔 กดกระดิ่งเพื่อรับการแจ้งเตือนวิดีโอใหม่');
+    // Add engagement CTA — ปรับตาม channelStage
+    const stage = options?.channelStage || config.channelStage || 'early_stage';
+    if (stage === 'early_stage') {
+      parts.push('👍 ถ้าชอบคลิปนี้ กด Subscribe เพื่อดูคลิปแบบนี้ทุกวัน — ฟรี!');
+      parts.push('🔔 กดกระดิ่ง เพื่อไม่พลาดทุกคลิปใหม่ที่อัปโหลดทุกวัน');
+      parts.push('💬 Comment บอกด้วยว่าอยากดูเนื้อหาแบบไหน!');
+    } else if (stage === 'pre_ypp') {
+      parts.push('📌 กดไลค์ กดติดตาม — ช่วยให้ช่องเติบโตและสร้างคอนเทนต์ต่อไปได้!');
+      parts.push('🔔 กดกระดิ่งเพื่อรับการแจ้งเตือนวิดีโอใหม่');
+    } else {
+      parts.push('📌 กดไลค์ กดแชร์ กดติดตาม เพื่อไม่พลาดคลิปใหม่ทุกวัน!');
+      parts.push('🔔 กดกระดิ่งเพื่อรับการแจ้งเตือนวิดีโอใหม่');
+    }
     parts.push('');
 
     // Add hashtags as keywords in description (YouTube indexes these)
@@ -837,15 +934,35 @@ class SEOService {
     return Math.max(0, Math.min(100, Math.round(value)));
   }
 
-  _defaultOpportunityAngle(categoryId, virality) {
-    if ((virality?.score || 0) >= 75) return 'คลิปแรง เหมาะกับการทำ title ที่จับ hook ใน 5 คำแรกและ CTA ให้ติดตาม';
+  _defaultOpportunityAngle(categoryId, virality, channelStage = 'monetized') {
+    if (channelStage === 'early_stage') {
+      if ([26, 27, 28].includes(categoryId)) return 'คลิป tutorial/howto ดีมากสำหรับช่องใหม่ — คนดูนานและมักติดตามเพื่อดูตอนต่อไป';
+      if ((virality?.score || 0) >= 75) return 'คลิปแรงมาก — เพิ่ม CTA "กด Subscribe เพื่อดูคลิปแบบนี้ทุกวัน" ท้ายคลิป';
+      return 'ช่วงเริ่มต้น: เลือกคลิปที่มี hook ชัด (5 วิแรก) และ CTA ให้ติดตามท้ายคลิปทุกอัน';
+    }
+    if (channelStage === 'pre_ypp') {
+      if (duration >= 60) return 'คลิปยาว ≥1 นาที สะสม watch hours ได้เร็ว — เป็นสิ่งที่ต้องการตอนนี้ก่อน YPP';
+      return 'ต้องการ watch hours — เน้นอัปคลิป >45 วินาที และ tutorial ที่คนดูจนจบ';
+    }
+    if ((virality?.score || 0) >= 75) return 'คลิปแรง ควรอัปในช่วง prime time พร้อม SEO เต็ม';
     if ([26, 27, 28].includes(categoryId)) return 'เพิ่มคำถาม/วิธีทำใน title เพื่อให้ค้นหาเจอระยะยาว';
     return 'เพิ่มบริบทและ keyword ใน description เพื่อให้ YouTube เข้าใจคลิปมากขึ้น';
   }
 
-  _opportunityRecommendation(score, validation) {
+  _opportunityRecommendation(score, validation, channelStage = 'monetized') {
     if (validation.status === 'blocked') return 'ข้ามคลิปนี้เพื่อป้องกันเสียช่องหรือรายได้';
     if (validation.status === 'warning') return 'ตรวจด้วยคนก่อนอัป และปรับคำเสี่ยงใน title/description';
+    if (channelStage === 'early_stage') {
+      if (score >= 82) return 'คลิปนี้ดีมากสำหรับช่องใหม่ — มีโอกาสสร้างผู้ติดตามสูง อัปได้เลย';
+      if (score >= 68) return 'เหมาะกับการโตช่อง — เพิ่ม CTA ให้ subscribe ท้ายคลิป';
+      if (score >= 52) return 'ใช้ได้ แต่หาคลิปที่มี hook และ narrative ชัดกว่า';
+      return 'score ต่ำ — ช่วงเริ่มต้นควรเลือกคลิปที่มีโอกาสสร้าง subscriber สูงกว่านี้';
+    }
+    if (channelStage === 'pre_ypp') {
+      if (score >= 82) return 'คลิปนี้ช่วยสะสม watch hours ได้ดีมาก — อัปได้เลย';
+      if (score >= 68) return 'ดี — เน้นอัปช่วง 19-21 น. ให้ได้ views เร็ว = watch hours เร็ว';
+      return 'หาคลิปที่ยาวกว่าหรือมี tutorial เพื่อสะสม watch hours ให้เร็วขึ้น';
+    }
     if (score >= 82) return 'คลิปมูลค่าสูง ควรอัปในช่วง prime time พร้อม SEO เต็ม';
     if (score >= 68) return 'เหมาะกับการโตช่อง เลือกได้ถ้า quota ยังพอ';
     if (score >= 52) return 'ใช้ทดสอบได้ แต่ควรปรับ SEO ก่อนอัป';

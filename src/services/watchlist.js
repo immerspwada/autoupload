@@ -175,6 +175,13 @@ class WatchlistService extends EventEmitter {
 
   // ── Main run ────────────────────────────────────────────────────
   async runAll(uploadCallback) {
+    // ★ Guard ป้องกัน concurrent run — ถ้ากำลัง run อยู่แล้ว return ทันที
+    if (this.runState.running) {
+      logger.warn('[Watchlist] runAll called while already running — skipping duplicate run');
+      this._step('warn', '⚠️ กำลังรันอยู่แล้ว — ข้าม duplicate run');
+      return { queued: 0, skipped: 0, keywords: [], skippedReason: 'already_running' };
+    }
+
     const data = watchlistStore.load();
     let enabled = (data.keywords || []).filter(k => k.enabled);
 
@@ -202,11 +209,13 @@ class WatchlistService extends EventEmitter {
 
     const tiktok  = require('./tiktok');
     const seo     = require('./seo');
-    const { uploads } = require('../utils/store');
+    const { uploads, settings } = require('../utils/store');
+    const channelStage = settings.load().channelStage || 'early_stage';
 
     let totalQueued = 0, totalSkipped = 0;
     const summary = [];
 
+    try {
     for (let i = 0; i < enabled.length; i++) {
       const kw = enabled[i];
       this.runState.keywordIndex   = i + 1;
@@ -249,7 +258,7 @@ class WatchlistService extends EventEmitter {
             this._step('skip', `ข้าม (บล็อก): ${(v.desc||'').substring(0,40)}`);
             continue;
           }
-          const opp   = seo.analyzeOpportunity({ ...v, virality, validation }, { alreadyUploaded: false });
+          const opp   = seo.analyzeOpportunity({ ...v, virality, validation }, { alreadyUploaded: false, channelStage });
           const score = opp?.score ?? virality?.score ?? 0;
           if (score < kw.minScore) {
             kwS++; totalSkipped++;
@@ -272,6 +281,10 @@ class WatchlistService extends EventEmitter {
         this._step('error', `ข้อผิดพลาด "${kw.keyword}": ${err.message}`);
         summary.push({ keyword: kw.keyword, error: err.message, queued: 0 });
       }
+    }
+    } finally {
+      // ★ รับประกัน running flag reset เสมอ — ป้องกัน deadlock กรณี exception หลุด for-loop
+      this.runState.running = false;
     }
 
     if (!enabled.every(k => k.isAuto)) {
