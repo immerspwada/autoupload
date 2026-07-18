@@ -11,6 +11,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 const logger = require('../utils/logger');
+const C      = require('../config/constants');
 const { settings } = require('../utils/store');
 
 // YouTube Video Categories (ที่ใช้บ่อยในไทย)
@@ -321,19 +322,17 @@ class SEOService {
     const shares = tiktokData.shareCount || 0;
     const createTime = tiktokData.createTime; // unix seconds
 
-    if (views < 50) {
-      // Not enough data to score meaningfully
-      return { score: 0, tier: 'unknown', breakdown: { reason: 'ยอดดูน้อยเกินไป (ต่ำกว่า 50) ยังไม่มีข้อมูลพอประเมิน' } };
+    if (views < C.SEO.MIN_VIEWS_FOR_SCORE) {
+      return { score: 0, tier: 'unknown', breakdown: { reason: `ยอดดูน้อยเกินไป (ต่ำกว่า ${C.SEO.MIN_VIEWS_FOR_SCORE}) ยังไม่มีข้อมูลพอประเมิน` } };
     }
 
-    const likeRate = likes / views;       // typically 0.02–0.25 for good content
-    const commentRate = comments / views; // typically 0.0005–0.01
-    const shareRate = shares / views;     // typically 0.001–0.05, strongest viral signal
+    const likeRate    = likes    / views;
+    const commentRate = comments / views;
+    const shareRate   = shares   / views;
 
-    // Normalize each ratio against realistic "great content" ceilings, cap at 1
-    const likeScore = Math.min(likeRate / 0.15, 1) * 40;      // up to 40 pts
-    const commentScore = Math.min(commentRate / 0.008, 1) * 15; // up to 15 pts
-    const shareScore = Math.min(shareRate / 0.03, 1) * 30;     // up to 30 pts (shares matter most for re-upload virality)
+    const likeScore    = Math.min(likeRate    / C.SEO.LIKE_RATE_CEILING,    1) * 40;
+    const commentScore = Math.min(commentRate / C.SEO.COMMENT_RATE_CEILING, 1) * 15;
+    const shareScore   = Math.min(shareRate   / C.SEO.SHARE_RATE_CEILING,   1) * 30;
 
     // Recency bonus: fresher clips are more likely still trending / less saturated
     let recencyScore = 5; // default small bonus if unknown

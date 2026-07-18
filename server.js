@@ -4,15 +4,16 @@ const path = require('path');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 
-const logger = require('./src/utils/logger');
+const logger      = require('./src/utils/logger');
+const C           = require('./src/config/constants');
 const requestLogger = require('./src/middleware/requestLogger');
 const { errorHandler, notFoundHandler } = require('./src/middleware/errorHandler');
 const youtubeService = require('./src/services/youtube');
-const uploadQueue = require('./src/services/queue');
-const scheduler = require('./src/services/scheduler');
-const healthService = require('./src/services/health');
-const orchestrator = require('./src/services/orchestrator');
-const eventBus = require('./src/services/eventbus');
+const uploadQueue    = require('./src/services/queue');
+const scheduler      = require('./src/services/scheduler');
+const healthService  = require('./src/services/health');
+const orchestrator   = require('./src/services/orchestrator');
+const eventBus       = require('./src/services/eventbus');
 
 // Routes
 const authRoutes = require('./src/routes/auth');
@@ -92,6 +93,7 @@ app.use('/api/quota', require('./src/routes/quota'));
 app.use('/api/activity', activityRoutes);
 app.use('/api/accounts', require('./src/routes/accounts'));
 app.use('/api/watchlist', require('./src/routes/watchlist'));
+app.use('/api/analytics', require('./src/routes/analytics'));
 
 // Event Bus API
 app.get('/api/events/history', (req, res) => {
@@ -103,20 +105,10 @@ app.get('/api/events/rules', (req, res) => {
   res.json(orchestrator.getRules());
 });
 
-// Legacy routes compatibility (so existing frontend still works while we upgrade)
-app.get('/api/settings', (req, res) => {
-  const { settings } = require('./src/utils/store');
-  res.json(settings.load());
-});
-
-app.post('/api/settings', (req, res) => {
-  const { settings } = require('./src/utils/store');
-  const current = settings.load();
-  const updated = { ...current, ...req.body };
-  settings.save(updated);
-  orchestrator.onSettingsUpdated(updated);
-  res.json({ success: true });
-});
+// ★ /api/settings — delegate to /api/files/settings
+// ลบ inline handler ที่ซ้ำออก เหลือแค่ proxy ไป files route ที่ถูกต้อง
+app.get('/api/settings',  (req, res) => res.redirect(307, '/api/files/settings'));
+app.post('/api/settings', (req, res) => res.redirect(307, '/api/files/settings'));
 
 // Legacy routes — removed upload/files/history/queue/scheduler pages
 // These routes are kept for backward compatibility but return 404 if removed pages are accessed
@@ -218,7 +210,7 @@ server.listen(PORT, () => {
     } catch (err) {
       logger.error('Health cleanup error', { error: err.message });
     }
-  }, 6 * 60 * 60 * 1000);
+  }, C.HEALTH.CLEANUP_INTERVAL_MS);
 
   // Broadcast system status every 30 seconds
   setInterval(async () => {
@@ -226,12 +218,12 @@ server.listen(PORT, () => {
       const health = await healthService.getHealth();
       broadcast('system:status', {
         overall: health.overall,
-        uptime: health.uptimeFormatted,
-        queue: health.queue,
-        youtube: health.youtube
+        uptime:  health.uptimeFormatted,
+        queue:   health.queue,
+        youtube: health.youtube,
       });
     }
-  }, 30000);
+  }, C.HEALTH.STATUS_BROADCAST_MS);
 });
 
 // Graceful shutdown

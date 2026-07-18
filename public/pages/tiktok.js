@@ -203,9 +203,22 @@ export function render() {
 let results = [];
 let currentVisibleResults = [];
 let currentFilters = { hideDuplicates: true, hideBlocked: false, sortBy: 'opportunity', minScore: 0 };
-let currentMode = 'search'; // track which tab is active for post-batch refresh
+let currentMode = 'search';
 let urlCheckTimer = null;
-let _activeBatchSSE = null; // ★ track active SSE for cleanup on navigate
+let _activeBatchSSE = null;
+
+// ★ แก้: ย้ายจาก window._ globals มาเป็น module-level flags
+// cleanup() จะ reset ทุกครั้งที่ navigate ออก ทำให้ init ทำงานซ้ำได้ถูกต้อง
+let _watchlistInited    = false;
+let _delegationAttached = false;
+
+// Delegation handler ที่ named function เพื่อให้ removeEventListener ได้
+function _delegationHandler(e) {
+  if (e.target.id === 'btn-tiktok-select-all')   toggleAll();
+  else if (e.target.id === 'btn-tiktok-smart-select') selectRecommended();
+  else if (e.target.id === 'btn-tiktok-batch')        batchUpload();
+  else if (e.target.id === 'btn-tiktok-batch-save')   batchSaveToComputer();
+}
 
 export function init() {
   // Mode tabs
@@ -231,24 +244,18 @@ export function init() {
     creatorInput.addEventListener('keypress', e => { if (e.key==='Enter') fetchCreator(); });
   }
 
-  // Watchlist panel — lazy init when tab is opened
-  if (!window._watchlistInited) {
-    window._watchlistInited = true;
+  // Watchlist panel — ใช้ instance-level flag แทน window global
+  // ★ แก้: window._watchlistInited รั่วข้ามหน้า → ย้ายเป็น module-level flag
+  //   ที่ cleanup() จะ reset ให้ทุกครั้งที่ navigate ออก
+  if (!_watchlistInited) {
+    _watchlistInited = true;
     initWatchlistPanel();
-  }  // Results controls — ใช้ flag เพื่อป้องกัน duplicate delegation listener
-  if (!window._tiktokDelegationAttached) {
-    window._tiktokDelegationAttached = true;
-    document.addEventListener('click', (e) => {
-      if (e.target.id === 'btn-tiktok-select-all') {
-        toggleAll();
-      } else if (e.target.id === 'btn-tiktok-smart-select') {
-        selectRecommended();
-      } else if (e.target.id === 'btn-tiktok-batch') {
-        batchUpload();
-      } else if (e.target.id === 'btn-tiktok-batch-save') {
-        batchSaveToComputer();
-      }
-    });
+  }
+  // Results controls — ใช้ instance-level flag แทน window global
+  // ★ แก้: window._tiktokDelegationAttached รั่วข้ามหน้า → ย้ายเป็น module-level
+  if (!_delegationAttached) {
+    _delegationAttached = true;
+    document.addEventListener('click', _delegationHandler);
   }
 
   const list = document.getElementById('tiktok-video-list');
@@ -966,7 +973,7 @@ async function dlUpSingle(idx) {
     window.app.showToast('กำลังดำเนินการ...', 'info');
     const res = await fetchWithTimeout('/api/tiktok/download-and-upload',
       { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({videoUrl:v.videoUrl, title:(v.desc||'').substring(0,100), desc:v.desc, author:v.author, duration:v.duration}) },
+        body: JSON.stringify({videoUrl:v.videoUrl, title:(v.desc||'').substring(0,100), desc:v.desc, author:v.author, duration:v.duration, viralityScore: v.virality?.score ?? null}) },
       120000);
     const d = await res.json();
     if (d.success) {
@@ -1227,10 +1234,10 @@ async function seoPreview(idx) {
 
 window.tiktokPage = { dlUp: dlUpSingle, seoPreview, saveToComputer };
 
-// ★ Cleanup — ปิด SSE connections ทั้งหมดเมื่อ navigate ออกจากหน้า
+// ★ Cleanup — ปิด SSE connections ทั้งหมดและ reset flags เมื่อ navigate ออกจากหน้า
 export function cleanup() {
   // ปิด batch upload SSE
-  if (typeof _activeBatchSSE !== 'undefined' && _activeBatchSSE) {
+  if (_activeBatchSSE) {
     try { _activeBatchSSE.close(); } catch (_) {}
     _activeBatchSSE = null;
   }
@@ -1244,6 +1251,12 @@ export function cleanup() {
     clearTimeout(urlCheckTimer);
     urlCheckTimer = null;
   }
+  // ★ Reset module-level flags เพื่อให้ init ทำงานใหม่ถูกต้องเมื่อ navigate กลับมา
+  if (_delegationAttached) {
+    document.removeEventListener('click', _delegationHandler);
+    _delegationAttached = false;
+  }
+  _watchlistInited = false;
 }
 
 // ══════════════════════════════════════════════════════════════

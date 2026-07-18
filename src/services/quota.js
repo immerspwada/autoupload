@@ -14,14 +14,15 @@
 // 💡 Extended quota: ขอเพิ่มได้ถึง 1M+ units/day (ต้องสมัคร)
 // ═══════════════════════════════════════════════════════════════════
 
-const fs = require('fs');
-const path = require('path');
+const fs     = require('fs');
+const path   = require('path');
 const logger = require('../utils/logger');
+const C      = require('../config/constants');
 
-const QUOTA_FILE = path.join(__dirname, '../../data/quota.json');
-const DAILY_LIMIT = 10000; // Default YouTube API quota
-const UPLOAD_COST = 1600;
-const RESET_HOUR_PST = 0; // Midnight Pacific Time (UTC-8)
+const QUOTA_FILE   = path.join(__dirname, '../../data/quota.json');
+const DAILY_LIMIT  = C.YOUTUBE.DAILY_QUOTA_LIMIT;
+const UPLOAD_COST  = C.YOUTUBE.UPLOAD_COST;
+const RESET_HOUR_PST = 0; // Midnight PST
 
 class QuotaManager {
   constructor() {

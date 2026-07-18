@@ -10,6 +10,7 @@ const ROUTES = {
   '/tiktok':    () => import('./pages/tiktok.js?v=4'),
   '/accounts':  () => import('./pages/accounts.js?v=1'),
   '/seo':       () => import('./pages/seo.js?v=2'),
+  '/uploads':   () => import('./pages/uploads.js?v=1'),
   '/activity':  () => import('./pages/activity.js?v=2'),
   '/settings':  () => import('./pages/settings.js?v=2'),
 };
@@ -292,7 +293,7 @@ document.getElementById('upload-form').addEventListener('submit', async (e) => {
 // ==================== KEYBOARD SHORTCUTS ====================
 document.addEventListener('keydown', (e) => {
   if (['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
-  const paths = ['/','/tiktok','/accounts','/seo','/activity','/settings'];
+  const paths = ['/','/tiktok','/accounts','/seo','/uploads','/activity','/settings'];
   if (e.key >= '1' && e.key <= String(paths.length)) { e.preventDefault(); navigate(paths[parseInt(e.key)-1]); return; }
   switch (e.key.toLowerCase()) {
     case 'r': e.preventDefault(); if (window.filesPage) window.filesPage.reload(); showToast('🔄','info'); break;

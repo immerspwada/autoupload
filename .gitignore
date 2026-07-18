@@ -23,3 +23,6 @@ Thumbs.db
 
 # Env
 .env
+
+# Superpowers local state
+.superpowers/

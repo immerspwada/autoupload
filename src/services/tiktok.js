@@ -1,30 +1,25 @@
 // TikTok Service - Search & Download without watermark
-const fs = require('fs');
-const path = require('path');
-const https = require('https');
-const http = require('http');
+const fs     = require('fs');
+const path   = require('path');
+const https  = require('https');
+const http   = require('http');
 const logger = require('../utils/logger');
+const C      = require('../config/constants');
 
 const DOWNLOAD_DIR = path.join(__dirname, '../../downloads/tiktok');
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
 class TikTokService {
   constructor() {
-    this.downloadDir = DOWNLOAD_DIR;
-    // tikwm.com (free tier) hard-limits to 1 request/second across the WHOLE
-    // service — even for unrelated keywords fired in parallel. We serialize
-    // every call through this queue so pagination + multi-keyword search
-    // never exceed that limit, no matter how many requests are in flight.
-    this._tikwmQueueTail = Promise.resolve();
-    this._tikwmMinIntervalMs = 1100;
-    this._tikwmLastCallAt = 0;
+    this.downloadDir         = DOWNLOAD_DIR;
+    this._tikwmQueueTail     = Promise.resolve();
+    this._tikwmMinIntervalMs = C.TIKTOK.THROTTLE_MS;
+    this._tikwmLastCallAt    = 0;
 
-    // Track success/failure per download provider so we can automatically
-    // try the most reliable provider first instead of a fixed order.
     this._providerStats = {
-      tikwm: { success: 0, failure: 0 },
-      ssstik: { success: 0, failure: 0 },
-      musicaldown: { success: 0, failure: 0 }
+      tikwm:       { success: 0, failure: 0 },
+      ssstik:      { success: 0, failure: 0 },
+      musicaldown: { success: 0, failure: 0 },
     };
   }
 
@@ -79,7 +74,7 @@ class TikTokService {
    * tikwm's free-tier limit of 1 request/second, and rate-limit
    * responses (code:-1) are retried instead of silently dropped.
    */
-  async _paginatedSearch(keyword, count, maxPages = 6) {
+  async _paginatedSearch(keyword, count, maxPages = C.TIKTOK.MAX_SEARCH_PAGES) {
     const collected = [];
     const seenIds = new Set();
     let cursor = 0;
@@ -156,7 +151,7 @@ class TikTokService {
    * @param {number} countPerKeyword - how many results to fetch per keyword
    * @param {number} concurrency - how many keyword searches to run at once
    */
-  async searchMultipleKeywords(keywords, countPerKeyword = 12, concurrency = 3) {
+  async searchMultipleKeywords(keywords, countPerKeyword = 12, concurrency = C.TIKTOK.SEARCH_CONCURRENCY) {
     const uniqueKeywords = [...new Set(
       keywords.map(k => (k || '').trim()).filter(Boolean)
     )];
@@ -208,7 +203,7 @@ class TikTokService {
 
       // Small delay between batches to be nice to the upstream API
       if (i + concurrency < uniqueKeywords.length) {
-        await this._delay(500);
+        await this._delay(C.TIKTOK.BATCH_DELAY_MS);
       }
     }
 
@@ -657,8 +652,7 @@ class TikTokService {
         reject(err);
       });
 
-      // Timeout after 60 seconds
-      request.setTimeout(60000, () => {
+      request.setTimeout(C.TIKTOK.DOWNLOAD_TIMEOUT_MS, () => {
         request.destroy();
         try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
         reject(new Error('Download timeout'));
@@ -700,8 +694,7 @@ class TikTokService {
       });
 
       req.on('error', reject);
-      req.setTimeout(8000, () => {
-        req.destroy();
+      req.setTimeout(8000, () => {        req.destroy();
         reject(new Error('Request timeout'));
       });
 

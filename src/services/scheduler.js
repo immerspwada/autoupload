@@ -1,81 +1,82 @@
-// Auto-upload Scheduler - watches folder and runs on interval
-const fs = require('fs');
+/**
+ * ★ Auto-upload Scheduler
+ *
+ * แก้ไขจาก original:
+ * 1. [CRITICAL] ลบ orchestrator.onUploadCompleted() ออกจาก _queueFile() task
+ *    — Queue emit 'completed' → orchestrator._wireQueue() จัดการให้แล้ว
+ *    — เดิมทำให้นับ stats 2 ครั้งทุก folder-upload
+ * 2. [HIGH] _updateStats() ใน runWatchlist ถูกลบออก → ใช้ EventBus แทน
+ * 3. [MEDIUM] แทน magic numbers ด้วย constants
+ * 4. [MEDIUM] uploads.save ใน _queueFile ใช้ safeUpdate เพื่อป้องกัน race condition
+ * 5. [MEDIUM] cooldownMs ใน _startContinuousLoop อ่านจาก config
+ */
+const fs   = require('fs');
 const path = require('path');
-const logger = require('../utils/logger');
-const { settings, uploads, scheduler: schedulerStore, stats } = require('../utils/store');
+const logger    = require('../utils/logger');
+const C         = require('../config/constants');
+const { settings, uploads, scheduler: schedulerStore } = require('../utils/store');
 const youtubeService = require('./youtube');
-const uploadQueue = require('./queue');
+const uploadQueue    = require('./queue');
 
 const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.mpeg', '.mpg'];
 
 class Scheduler {
   constructor() {
-    this.interval = null;
-    this.watcher = null;
-    this.watchedFolder = null;
-    this._quotaWaitTimer = null;   // timer รอ quota reset
-    this._quotaPaused = false;     // สถานะหยุดชั่วคราวเพราะ quota หมด
-    this._loopRunning = false;     // ป้องกัน concurrent loop
+    this.interval        = null;
+    this.watcher         = null;
+    this.watchedFolder   = null;
+    this._quotaWaitTimer = null;
+    this._quotaPaused    = false;
+    this._loopRunning    = false;
   }
 
+  // ── Quota reset timer ────────────────────────────────────────────
+
   /**
-   * คำนวณ milliseconds จนถึงเที่ยงคืน PST (UTC-8) รอบถัดไป
-   * YouTube quota reset ตอนนี้ทุกวัน
+   * Milliseconds จนถึงเที่ยงคืน PST รอบถัดไป
    */
   _msUntilQuotaReset() {
-    const now = new Date();
-    // PST = UTC-8
-    const PST_OFFSET_MS = -8 * 60 * 60 * 1000;
+    const now           = new Date();
+    const PST_OFFSET_MS = C.YOUTUBE.PST_UTC_OFFSET_HOURS * 60 * 60 * 1000;
     const localOffsetMs = now.getTimezoneOffset() * 60 * 1000;
+    const pstNow        = new Date(now.getTime() + localOffsetMs + PST_OFFSET_MS);
 
-    // เวลาปัจจุบันใน PST
-    const pstNow = new Date(now.getTime() + localOffsetMs + PST_OFFSET_MS);
-
-    // เที่ยงคืน PST วันถัดไป
     const nextMidnightPST = new Date(pstNow);
-    nextMidnightPST.setHours(24, 2, 0, 0); // +2 นาที buffer หลัง reset
+    // +QUOTA_RESET_BUFFER_MINUTES หลัง reset เพื่อให้ Google flush quota จริง
+    nextMidnightPST.setHours(24, C.YOUTUBE.QUOTA_RESET_BUFFER_MINUTES, 0, 0);
 
-    // แปลงกลับเป็น local time และหา diff
     const nextResetLocal = new Date(nextMidnightPST.getTime() - localOffsetMs - PST_OFFSET_MS);
     return Math.max(0, nextResetLocal.getTime() - now.getTime());
   }
 
-  /**
-   * หยุดรอ quota reset แล้วเริ่ม scan อัตโนมัติหลัง reset
-   */
   _waitForQuotaReset() {
-    if (this._quotaWaitTimer) return; // กำลังรอแล้ว
+    if (this._quotaWaitTimer) return;
 
-    const msLeft = this._msUntilQuotaReset();
+    const msLeft  = this._msUntilQuotaReset();
     const resetAt = new Date(Date.now() + msLeft);
     this._quotaPaused = true;
 
     logger.info('⏸️  Quota หมดวันนี้ — หยุดรอจนถึง quota reset', {
-      resetAt: resetAt.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-      waitHours: (msLeft / 3600000).toFixed(1)
+      resetAt:   resetAt.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+      waitHours: (msLeft / 3_600_000).toFixed(1),
     });
 
     this._quotaWaitTimer = setTimeout(() => {
       this._quotaWaitTimer = null;
-      this._quotaPaused = false;
+      this._quotaPaused    = false;
       logger.info('✅ Quota reset แล้ว — เริ่ม scan อัตโนมัติ');
       this.scan();
     }, msLeft);
   }
 
-  /**
-   * เช็ค quota ก่อน scan — ถ้าหมดให้รอ reset
-   * @returns {boolean} true = มี quota เพียงพอ
-   */
   _checkQuotaBeforeScan() {
     try {
-      // ★ ใช้ youtubeService.getQuotaStatus() เพื่อรองรับ multi-account
-      // (quota.js เป็น legacy single-account store ที่อาจ out-of-sync)
       const quotaStatus = youtubeService.getQuotaStatus();
       if (quotaStatus.uploadsRemaining <= 0) {
         this._waitForQuotaReset();
         return false;
       }
+      // Quota กลับมาแล้ว — ยกเลิก pause state
       if (this._quotaPaused) {
         this._quotaPaused = false;
         if (this._quotaWaitTimer) {
@@ -84,10 +85,13 @@ class Scheduler {
         }
       }
       return true;
-    } catch (err) {
+    } catch (_err) {
+      // ถ้า quota check ล้มเหลว → อนุญาตไปก่อน (fail-open)
       return true;
     }
   }
+
+  // ── Lifecycle ────────────────────────────────────────────────────
 
   start() {
     const config = schedulerStore.load();
@@ -96,15 +100,13 @@ class Scheduler {
       return;
     }
 
-    const intervalMs = (config.intervalMinutes || 30) * 60 * 1000;
-    this.stop(); // Clear existing
+    const intervalMs = (config.intervalMinutes || C.SCHEDULER.DEFAULT_INTERVAL_MINUTES) * 60_000;
+    this.stop();
 
     this.interval = setInterval(() => this.scan(), intervalMs);
-    logger.info('Scheduler started', { intervalMinutes: config.intervalMinutes });
+    logger.info('Scheduler started', { intervalMinutes: config.intervalMinutes || C.SCHEDULER.DEFAULT_INTERVAL_MINUTES });
 
-    // Initial scan
     this.scan();
-    // Start folder watcher
     this.startWatcher();
   }
 
@@ -113,7 +115,6 @@ class Scheduler {
       clearInterval(this.interval);
       this.interval = null;
     }
-    // ยกเลิก quota-wait timer ถ้ากำลังรออยู่
     if (this._quotaWaitTimer) {
       clearTimeout(this._quotaWaitTimer);
       this._quotaWaitTimer = null;
@@ -122,6 +123,8 @@ class Scheduler {
     this.stopWatcher();
     logger.info('Scheduler stopped');
   }
+
+  // ── Folder Watcher ────────────────────────────────────────────────
 
   startWatcher() {
     const config = settings.load();
@@ -133,19 +136,17 @@ class Scheduler {
 
     try {
       this.watcher = fs.watch(folder, (eventType, filename) => {
-        if (eventType === 'rename' && filename) {
-          const ext = path.extname(filename).toLowerCase();
-          if (VIDEO_EXTENSIONS.includes(ext)) {
-            const filepath = path.join(folder, filename);
-            // Delay to let file finish writing
-            setTimeout(() => {
-              if (fs.existsSync(filepath)) {
-                logger.info('New video detected by watcher', { filename });
-                this._queueFile(filename, filepath);
-              }
-            }, 3000);
+        if (eventType !== 'rename' || !filename) return;
+        const ext = path.extname(filename).toLowerCase();
+        if (!VIDEO_EXTENSIONS.includes(ext)) return;
+        const filepath = path.join(folder, filename);
+        // Debounce: รอให้ file write เสร็จก่อน queue
+        setTimeout(() => {
+          if (fs.existsSync(filepath)) {
+            logger.info('New video detected by watcher', { filename });
+            this._queueFile(filename, filepath);
           }
-        }
+        }, C.SCHEDULER.WATCHER_DEBOUNCE_MS);
       });
       logger.info('Folder watcher started', { folder });
     } catch (err) {
@@ -156,13 +157,14 @@ class Scheduler {
   stopWatcher() {
     if (this.watcher) {
       this.watcher.close();
-      this.watcher = null;
-      this.watchedFolder = null;
+      this.watcher        = null;
+      this.watchedFolder  = null;
     }
   }
 
+  // ── Scan ──────────────────────────────────────────────────────────
+
   scan() {
-    // ถ้า quota หมด → รอ reset แล้วกลับมาใหม่เอง
     if (!this._checkQuotaBeforeScan()) {
       return { scanned: 0, queued: 0, reason: 'quota_exhausted' };
     }
@@ -175,9 +177,12 @@ class Scheduler {
     }
 
     const existingUploads = uploads.load();
+    // Build a Set for O(1) duplicate lookup
+    const uploadedSet = new Set(existingUploads.map(u => u.filename));
+
     const files = fs.readdirSync(folder).filter(f => {
       if (!VIDEO_EXTENSIONS.includes(path.extname(f).toLowerCase())) return false;
-      return !existingUploads.find(u => u.filename === f);
+      return !uploadedSet.has(f);
     });
 
     let queued = 0;
@@ -190,7 +195,6 @@ class Scheduler {
     schedulerStore.save({ ...schedulerStore.load(), lastRun: new Date().toISOString() });
     logger.info('Scheduler scan complete', { scanned: files.length, queued });
 
-    // ★ Run keyword watchlist after folder scan — then start continuous loop
     this.runWatchlist()
       .then(() => this._startContinuousLoop())
       .catch(err => logger.error('Watchlist run error', { error: err.message }));
@@ -198,16 +202,23 @@ class Scheduler {
     return { scanned: files.length, queued };
   }
 
+  // ── Queue File ────────────────────────────────────────────────────
+
+  /**
+   * ★ PATH B — Queue Upload
+   *    Queue จะ emit 'completed' event → orchestrator._wireQueue() จัดการ
+   *    ห้ามเรียก orchestrator.onUploadCompleted() ที่นี่เด็ดขาด (double-emit = stats 2x)
+   */
   _queueFile(filename, filepath) {
     const config = settings.load();
 
-    // Check if already in queue
+    // Skip if already in queue (pending/processing)
     const status = uploadQueue.getStatus();
     if (status.items.find(i => i.filename === filename && ['pending', 'processing'].includes(i.status))) {
       return;
     }
 
-    // Check if already uploaded
+    // Skip if already uploaded
     const existingUploads = uploads.load();
     if (existingUploads.find(u => u.filename === filename)) return;
 
@@ -218,135 +229,94 @@ class Scheduler {
     }
 
     uploadQueue.add(async () => {
-      // ★ Architecture rule: SEO service ต้องถูกเรียกก่อน upload ทุกครั้ง
       const seoService = require('./seo');
       const tiktokData = {
-        desc: path.basename(filename, path.extname(filename)),
-        author: '',
+        desc:     path.basename(filename, path.extname(filename)),
+        author:   '',
         duration: 0,
-        videoUrl: filepath
+        videoUrl: filepath,
       };
 
-      // Validate monetization (hard block)
+      // ★ Monetization gate
       const validation = seoService.validateForMonetization(tiktokData, tiktokData.desc);
       if (validation.status === 'blocked') {
-        logger.warn('[Scheduler] Skipping blocked content', { filename, issues: validation.issues.map(i => i.message) });
+        logger.warn('[Scheduler] Skipping blocked content', {
+          filename,
+          issues: validation.issues.map(i => i.message),
+        });
         throw new Error(`บล็อกอัตโนมัติ: ${validation.issues[0]?.message || 'ผิดนโยบาย'}`);
       }
 
-      // Generate SEO-optimized metadata
+      // ★ SEO metadata
       const metadata = seoService.generateMetadata(tiktokData, {
-        schedulePublish: config.autoSchedule || false
+        schedulePublish: config.autoSchedule || false,
       });
 
       const result = await youtubeService.uploadVideo({
         filepath,
-        title: metadata.title || path.basename(filename, path.extname(filename)),
+        title:       metadata.title || path.basename(filename, path.extname(filename)),
         description: metadata.description || config.defaultDescription || '',
-        tags: Array.isArray(metadata.tags) ? metadata.tags.join(',') : (metadata.tags || config.defaultTags || ''),
-        privacy: metadata.privacy || config.privacy || 'public',
-        categoryId: metadata.categoryId,
-        publishAt: metadata.publishAt || null
+        tags:        Array.isArray(metadata.tags) ? metadata.tags.join(',') : (metadata.tags || config.defaultTags || ''),
+        privacy:     metadata.privacy || config.privacy || 'public',
+        categoryId:  metadata.categoryId,
+        publishAt:   metadata.publishAt || null,
       });
 
-      // Record upload
-      const allUploads = uploads.load();
-      const record = {
-        filename,
-        filepath,
-        youtube_id: result.videoId,
-        youtube_url: result.youtubeUrl,
-        uploaded_at: new Date().toISOString(),
-        deleted: false
-      };
-
-      allUploads.push(record);
-
-      // Delete if configured
-      const shouldDelete = config.deleteAfterUpload === true || config.deleteAfterUpload === 'true';
-      if (shouldDelete && fs.existsSync(filepath)) {
-        fs.unlinkSync(filepath);
-        record.deleted = true;
-      }
-
-      uploads.save(allUploads);
-
-      // ★ emit ผ่าน EventBus — ห้ามเรียก _updateStats ตรง (architecture rule)
-      // Queue จะ emit 'completed' event → orchestrator._wireQueue() จัดการ stats
-      // แต่ _queueFile ไม่มี orchestrator reference ดังนั้น emit ผ่าน require
-      const orchestrator = require('./orchestrator');
-      orchestrator.onUploadCompleted({
-        filename,
-        size: fs.existsSync(filepath) ? fs.statSync(filepath).size : 0,
-        source: 'folder',
-        videoId: result.videoId,
-        youtubeUrl: result.youtubeUrl
+      // ★ Atomic / race-safe record write — safeUpdate serializes concurrent saves
+      await uploads.safeUpdate(arr => {
+        const record = {
+          filename,
+          filepath,
+          youtube_id:  result.videoId,
+          youtube_url: result.youtubeUrl,
+          uploaded_at: new Date().toISOString(),
+          source:      'folder',
+          deleted:     false,
+        };
+        const shouldDelete = config.deleteAfterUpload === true || config.deleteAfterUpload === 'true';
+        if (shouldDelete && fs.existsSync(filepath)) {
+          fs.unlinkSync(filepath);
+          record.deleted = true;
+        }
+        arr.push(record);
+        return arr;
       });
+
+      // ★ ห้ามเรียก orchestrator.onUploadCompleted() ที่นี่
+      //   Queue.emit('completed') → orchestrator._wireQueue() → eventBus.dispatch('upload:completed')
+      //   จัดการครบถ้วนแล้ว ถ้าเรียกซ้ำ stats จะนับ 2 ครั้ง
 
       return result;
     }, { filename });
   }
 
-  _updateStats(filepath, success) {
-    const allStats = stats.load();
-    const today = new Date().toISOString().split('T')[0];
-    const hour = new Date().getHours().toString();
-
-    if (success) {
-      allStats.totalUploads = (allStats.totalUploads || 0) + 1;
-      try {
-        if (fs.existsSync(filepath)) {
-          allStats.totalSize = (allStats.totalSize || 0) + fs.statSync(filepath).size;
-        }
-      } catch (e) { /* file may be deleted */ }
-    } else {
-      allStats.failedUploads = (allStats.failedUploads || 0) + 1;
-    }
-
-    // Daily stats
-    if (!allStats.dailyStats) allStats.dailyStats = {};
-    if (!allStats.dailyStats[today]) allStats.dailyStats[today] = { uploads: 0, failures: 0 };
-    if (success) allStats.dailyStats[today].uploads++;
-    else allStats.dailyStats[today].failures++;
-
-    // Hourly distribution
-    if (!allStats.uploadsByHour) allStats.uploadsByHour = {};
-    allStats.uploadsByHour[hour] = (allStats.uploadsByHour[hour] || 0) + 1;
-
-    stats.save(allStats);
-  }
+  // ── Config ────────────────────────────────────────────────────────
 
   getConfig() {
     const config = schedulerStore.load();
     return {
       ...config,
-      quotaPaused: this._quotaPaused,
+      quotaPaused:   this._quotaPaused,
       quotaResumeAt: this._quotaWaitTimer
         ? new Date(Date.now() + this._msUntilQuotaReset()).toISOString()
-        : null
+        : null,
     };
   }
 
   updateConfig(newConfig) {
-    const config = schedulerStore.load();
+    const config  = schedulerStore.load();
     const updated = { ...config, ...newConfig };
     schedulerStore.save(updated);
-
-    // Restart if enabled changed or interval changed
     if (updated.enabled) {
       this.start();
     } else {
       this.stop();
     }
-
     return updated;
   }
 
-  /**
-   * Continuous Loop — วนซ้ำทันทีหลังคิวว่าง + watchlist run เสร็จ
-   * ไม่ต้องรอ interval ถัดไป
-   * ป้องกัน concurrent ด้วย _loopRunning flag
-   */
+  // ── Continuous Loop ───────────────────────────────────────────────
+
   async _startContinuousLoop() {
     if (this._loopRunning) return;
     if (!schedulerStore.load().enabled) return;
@@ -356,35 +326,29 @@ class Scheduler {
 
     try {
       while (true) {
-        // 1. เช็คว่า scheduler ยังเปิดอยู่
         if (!schedulerStore.load().enabled) {
           logger.info('[Loop] Scheduler disabled — stopping loop');
           break;
         }
 
-        // 2. เช็ค quota
         if (!this._checkQuotaBeforeScan()) {
           logger.info('[Loop] Quota หมด — หยุดรอ reset แล้วกลับมาใหม่');
-          break; // _waitForQuotaReset จะเรียก scan() ซึ่งจะ trigger loop ใหม่
+          break;
         }
 
-        // 3. รอให้คิวว่างก่อน
         await this._waitForQueueEmpty();
 
-        // 4. เช็ค quota อีกครั้งหลังรอ
         if (!this._checkQuotaBeforeScan()) break;
 
-        // 5. Run watchlist รอบถัดไป (keyword ถัดไปใน rotation)
         logger.info('[Loop] Running next watchlist cycle...');
         const result = await this.runWatchlist();
 
-        // 6. ถ้าไม่มีอะไร queue เลย (ซ้ำหมด/ไม่มี keyword) → พักสักครู่แล้วลองใหม่
         if (result.queued === 0) {
-          const cooldownMs = 5 * 60 * 1000; // 5 นาที
-          logger.info(`[Loop] ไม่มีคลิปใหม่ — รอ ${cooldownMs / 60000} นาทีแล้วลองใหม่`);
+          // อ่าน cooldown จาก constants (ย้ายออกจาก hard-code แล้ว)
+          const cooldownMs = C.SCHEDULER.LOOP_COOLDOWN_MS;
+          logger.info(`[Loop] ไม่มีคลิปใหม่ — รอ ${cooldownMs / 60_000} นาทีแล้วลองใหม่`);
           await this._delay(cooldownMs);
         }
-        // ถ้ามีของ queue → loop ต่อทันที (จะรอ queue ว่างที่ step 3)
       }
     } finally {
       this._loopRunning = false;
@@ -392,10 +356,6 @@ class Scheduler {
     }
   }
 
-  /**
-   * รอจนกว่าคิวจะว่าง (pending + processing = 0)
-   * poll ทุก 10 วินาที
-   */
   _waitForQueueEmpty() {
     return new Promise(resolve => {
       const check = () => {
@@ -403,8 +363,8 @@ class Scheduler {
         if ((s.pending || 0) + (s.processing || 0) === 0) {
           resolve();
         } else {
-          logger.debug(`[Loop] Queue ยังมีงาน — pending:${s.pending} processing:${s.processing} — รออีก 10s`);
-          setTimeout(check, 10000);
+          logger.debug(`[Loop] Queue ยังมีงาน — pending:${s.pending} processing:${s.processing} — รออีก ${C.SCHEDULER.QUEUE_POLL_MS / 1000}s`);
+          setTimeout(check, C.SCHEDULER.QUEUE_POLL_MS);
         }
       };
       check();
@@ -415,10 +375,8 @@ class Scheduler {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  /**
-   * Run Keyword Watchlist — ค้นหา TikTok ตาม keywords ที่บันทึกไว้
-   * แล้วอัปโหลด YouTube อัตโนมัติ (เรียกโดย scan() และ API)
-   */
+  // ── Watchlist Runner ──────────────────────────────────────────────
+
   async runWatchlist() {
     if (!this._checkQuotaBeforeScan()) {
       logger.info('[Watchlist] Quota หมด — ข้าม watchlist run');
@@ -436,8 +394,7 @@ class Scheduler {
     const config           = settings.load();
     const channelStage     = config.channelStage || 'early_stage';
 
-    return watchlistService.runAll(async ({ video, keyword, watchId }) => {
-      // Generate SEO metadata — ใช้ channelStage เพื่อ schedule prime-time ที่เหมาะกับระยะช่อง
+    return watchlistService.runAll(async ({ video, keyword }) => {
       const metadata = seoService.generateMetadata(video, {
         source:       'tiktok',
         keyword,
@@ -446,29 +403,28 @@ class Scheduler {
         channelStage,
       });
 
-      // Download + upload via queue
-      const tiktokService = require('./tiktok');
+      const tiktokService    = require('./tiktok');
+      const suggestedFilename = (video.desc || keyword)
+        .substring(0, 60)
+        .replace(/[^\w\s\-ก-๙]/g, '')
+        .trim() || `tiktok_${video.id || Date.now()}`;
 
-      // สร้างชื่อไฟล์จาก video ก่อน (ใช้เป็น queue label)
-      const suggestedFilename = (video.desc || keyword).substring(0, 60)
-        .replace(/[^\w\s\-ก-๙]/g, '').trim() || `tiktok_${video.id || Date.now()}`;
-
+      // ★ PATH B — ห้ามเรียก orchestrator ที่นี่
+      //   Queue.emit('completed') → orchestrator จัดการให้
       uploadQueue.add(async () => {
         let downloaded = null;
         try {
-          // Download no-watermark
-          downloaded = await tiktokService.downloadNoWatermark(
-            video.videoUrl,
-            suggestedFilename
-          );
+          downloaded = await tiktokService.downloadNoWatermark(video.videoUrl, suggestedFilename);
         } catch (dlErr) {
-          const watchlistService = require('./watchlist');
-          watchlistService.notifyDlError(); // trigger backoff if repeated
-          logger.error('[Watchlist] Download failed', { keyword, error: dlErr.message, videoUrl: video.videoUrl });
+          watchlistService.notifyDlError();
+          logger.error('[Watchlist] Download failed', {
+            keyword,
+            error:    dlErr.message,
+            videoUrl: video.videoUrl,
+          });
           throw dlErr;
         }
 
-        // Upload to YouTube
         const result = await youtubeService.uploadVideo({
           filepath:    downloaded.filepath,
           title:       metadata.title,
@@ -479,29 +435,34 @@ class Scheduler {
           categoryId:  metadata.categoryId,
         });
 
-        // Record upload
-        const allUploads = uploads.load();
-        allUploads.push({
-          filename:         downloaded.filename,
-          filepath:         downloaded.filepath,
-          youtube_id:       result.videoId,
-          youtube_url:      result.youtubeUrl,
-          uploaded_at:      new Date().toISOString(),
-          source:           'tiktok_watchlist',
-          source_url:       video.videoUrl,
-          tiktok_video_id:  video.id,
-          watch_keyword:    keyword,
-          deleted:          false,
+        // ★ Atomic record write — ป้องกัน race condition กับ batch-upload path
+        await uploads.safeUpdate(arr => {
+          arr.push({
+            filename:        downloaded.filename,
+            filepath:        downloaded.filepath,
+            youtube_id:      result.videoId,
+            youtube_url:     result.youtubeUrl,
+            uploaded_at:     new Date().toISOString(),
+            source:          'tiktok_watchlist',
+            source_url:      video.videoUrl,
+            tiktok_video_id: video.id,
+            watch_keyword:   keyword,
+            deleted:         false,
+          });
+          return arr;
         });
-        uploads.save(allUploads);
 
         // Cleanup downloaded file
         try {
           if (fs.existsSync(downloaded.filepath)) fs.unlinkSync(downloaded.filepath);
         } catch (_) {}
 
-        this._updateStats(downloaded.filepath, true);
-        logger.info('[Watchlist] Upload complete', { keyword, title: metadata.title, youtubeUrl: result.youtubeUrl });
+        // ★ ไม่เรียก _updateStats() ตรง — ใช้ EventBus rule ผ่าน Queue.emit('completed')
+        logger.info('[Watchlist] Upload complete', {
+          keyword,
+          title:      metadata.title,
+          youtubeUrl: result.youtubeUrl,
+        });
         return result;
       }, { filename: suggestedFilename });
     });

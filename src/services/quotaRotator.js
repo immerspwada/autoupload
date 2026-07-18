@@ -16,14 +16,15 @@
 
 const accountManager = require('../utils/accounts');
 const logger = require('../utils/logger');
+const C      = require('../config/constants');
 
-const UPLOAD_COST = 1600; // units per upload
-const ACTIVE_ACCOUNT_STICKINESS = 250; // avoid needless account switching on close ties
+const UPLOAD_COST             = C.YOUTUBE.UPLOAD_COST;
+const ACTIVE_ACCOUNT_STICKINESS = C.QUOTA_ROTATOR.ACTIVE_ACCOUNT_STICKINESS;
 
 class QuotaRotator {
   constructor() {
-    this.rotationLog = []; // ประวัติการ rotate
-    this.maxLogEntries = 100;
+    this.rotationLog   = [];
+    this.maxLogEntries = C.QUOTA_ROTATOR.MAX_LOG_ENTRIES;
   }
 
   /**
@@ -156,7 +157,6 @@ class QuotaRotator {
       if (this.rotationLog.length > this.maxLogEntries) {
         this.rotationLog = this.rotationLog.slice(0, this.maxLogEntries);
       }
-
       logger.info(`[QuotaRotator] Rotated: ${rotationEntry.fromAccount} → ${rotationEntry.toAccount}`, {
         reason: rotationEntry.reason,
         newRemaining: result.remaining,

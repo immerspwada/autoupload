@@ -1,40 +1,49 @@
-// Health Check Service - System status monitoring
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+/**
+ * ★ Health Check Service
+ *
+ * แก้ไขจาก original:
+ * 1. [CRITICAL] cleanupQueue() — logic ผิด (indexOf บน array ที่กำลัง filter)
+ *    → แก้เป็น Set-based removal ที่ถูกต้อง
+ * 2. [MEDIUM] แทน magic numbers ด้วย constants
+ * 3. [MEDIUM] cleanupTempFiles ใช้ constant แทน hard-code 24h
+ */
+const fs     = require('fs');
+const path   = require('path');
+const os     = require('os');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
-const { settings, uploads, stats } = require('../utils/store');
+const C      = require('../config/constants');
+const { settings, uploads } = require('../utils/store');
 const youtubeService = require('./youtube');
-const uploadQueue = require('./queue');
+const uploadQueue    = require('./queue');
 
 class HealthService {
   constructor() {
-    this.fileHashes = new Map(); // filename -> hash for duplicate detection
+    this.fileHashes = new Map(); // hash → filename
     this._loadHashes();
   }
 
-  // ==================== SYSTEM HEALTH ====================
+  // ── System Health ─────────────────────────────────────────────────
+
   async getHealth() {
     const config = settings.load();
     const folder = config.folder;
 
     const checks = {
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
+      timestamp:       new Date().toISOString(),
+      uptime:          process.uptime(),
       uptimeFormatted: this._formatUptime(process.uptime()),
-      memory: this._getMemoryInfo(),
-      disk: folder ? await this._getDiskInfo(folder) : null,
-      youtube: this._getYouTubeStatus(),
-      queue: this._getQueueHealth(),
-      folder: this._getFolderHealth(folder),
-      overall: 'healthy' // will be downgraded
+      memory:          this._getMemoryInfo(),
+      disk:            folder ? await this._getDiskInfo(folder) : null,
+      youtube:         this._getYouTubeStatus(),
+      queue:           this._getQueueHealth(),
+      folder:          this._getFolderHealth(folder),
+      overall:         'healthy',
     };
 
-    // Determine overall health
-    if (!checks.youtube.connected) checks.overall = 'warning';
-    if (checks.queue.failed > 0) checks.overall = 'warning';
-    if (checks.disk && checks.disk.percentUsed > 90) checks.overall = 'critical';
+    if (!checks.youtube.connected)                              checks.overall = 'warning';
+    if (checks.queue.failed > 0)                               checks.overall = 'warning';
+    if (checks.disk && checks.disk.percentUsed > 90)           checks.overall = 'critical';
     if (checks.folder && checks.folder.configured && !checks.folder.accessible) checks.overall = 'warning';
 
     return checks;
@@ -43,48 +52,43 @@ class HealthService {
   _getMemoryInfo() {
     const used = process.memoryUsage();
     return {
-      rss: this._formatBytes(used.rss),
-      heapUsed: this._formatBytes(used.heapUsed),
-      heapTotal: this._formatBytes(used.heapTotal),
-      systemFree: this._formatBytes(os.freemem()),
-      systemTotal: this._formatBytes(os.totalmem())
+      rss:         this._formatBytes(used.rss),
+      heapUsed:    this._formatBytes(used.heapUsed),
+      heapTotal:   this._formatBytes(used.heapTotal),
+      systemFree:  this._formatBytes(os.freemem()),
+      systemTotal: this._formatBytes(os.totalmem()),
     };
   }
 
   async _getDiskInfo(folder) {
     try {
-      const stats = fs.statfsSync(folder);
-      const total = stats.blocks * stats.bsize;
-      const free = stats.bfree * stats.bsize;
-      const used = total - free;
+      const s      = fs.statfsSync(folder);
+      const total  = s.blocks * s.bsize;
+      const free   = s.bfree  * s.bsize;
+      const used   = total - free;
       return {
-        total: this._formatBytes(total),
-        free: this._formatBytes(free),
-        used: this._formatBytes(used),
-        percentUsed: Math.round((used / total) * 100)
+        total:       this._formatBytes(total),
+        free:        this._formatBytes(free),
+        used:        this._formatBytes(used),
+        percentUsed: Math.round((used / total) * 100),
       };
-    } catch (e) {
-      return null;
-    }
+    } catch (_) { return null; }
   }
 
   _getYouTubeStatus() {
     const auth = youtubeService.isAuthenticated();
-    return {
-      connected: auth.authenticated,
-      hasCredentials: auth.hasCredentials
-    };
+    return { connected: auth.authenticated, hasCredentials: auth.hasCredentials };
   }
 
   _getQueueHealth() {
-    const status = uploadQueue.getStatus();
+    const s = uploadQueue.getStatus();
     return {
-      pending: status.pending,
-      processing: status.processing,
-      done: status.done,
-      failed: status.failed,
-      paused: status.paused,
-      healthy: status.failed === 0
+      pending:    s.pending,
+      processing: s.processing,
+      done:       s.done,
+      failed:     s.failed,
+      paused:     s.paused,
+      healthy:    s.failed === 0,
     };
   }
 
@@ -96,30 +100,30 @@ class HealthService {
       try {
         fileCount = fs.readdirSync(folder).filter(f => {
           const ext = path.extname(f).toLowerCase();
-          return ['.mp4','.avi','.mov','.mkv','.wmv','.flv','.webm','.m4v'].includes(ext);
+          return ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v'].includes(ext);
         }).length;
-      } catch (e) { /* */ }
+      } catch (_) {}
     }
     return { configured: true, accessible: exists, videoCount: fileCount };
   }
 
-  // ==================== DUPLICATE DETECTION ====================
+  // ── Duplicate Detection ───────────────────────────────────────────
+
   async getFileHash(filepath) {
     return new Promise((resolve, reject) => {
-      const hash = crypto.createHash('md5');
-      const stream = fs.createReadStream(filepath, { end: 1024 * 1024 }); // First 1MB only for speed
-      stream.on('data', (data) => hash.update(data));
-      stream.on('end', () => resolve(hash.digest('hex')));
+      const hash   = crypto.createHash('md5');
+      const stream = fs.createReadStream(filepath, { end: C.HEALTH.HASH_READ_BYTES - 1 });
+      stream.on('data', d  => hash.update(d));
+      stream.on('end',  () => resolve(hash.digest('hex')));
       stream.on('error', reject);
     });
   }
 
   async isDuplicate(filepath) {
     try {
-      const hash = await this.getFileHash(filepath);
+      const hash     = await this.getFileHash(filepath);
       const filename = path.basename(filepath);
 
-      // Check hash map
       if (this.fileHashes.has(hash)) {
         const existing = this.fileHashes.get(hash);
         if (existing !== filename) {
@@ -127,15 +131,14 @@ class HealthService {
         }
       }
 
-      // Check upload history
       const allUploads = uploads.load();
-      const byHash = allUploads.find(u => u.hash === hash);
+      const byHash     = allUploads.find(u => u.hash === hash);
       if (byHash) {
         return { duplicate: true, originalFile: byHash.filename, youtubeUrl: byHash.youtube_url, hash };
       }
 
       return { duplicate: false, hash };
-    } catch (e) {
+    } catch (_) {
       return { duplicate: false, hash: null };
     }
   }
@@ -151,31 +154,44 @@ class HealthService {
       try {
         const data = JSON.parse(fs.readFileSync(hashFile, 'utf8'));
         Object.entries(data).forEach(([k, v]) => this.fileHashes.set(k, v));
-      } catch (e) { /* */ }
+      } catch (_) {}
     }
   }
 
   _saveHashes() {
     const hashFile = path.join(__dirname, '../../data/hashes.json');
-    const data = Object.fromEntries(this.fileHashes);
-    fs.writeFileSync(hashFile, JSON.stringify(data, null, 2));
+    const data     = Object.fromEntries(this.fileHashes);
+    const tmp      = hashFile + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, hashFile);
   }
 
-  // ==================== AUTO CLEANUP ====================
+  // ── Auto Cleanup ──────────────────────────────────────────────────
+
+  /**
+   * ★ cleanupQueue — แก้ logic ที่ผิดใน original
+   *
+   * Bug เดิม: ใช้ uploadQueue.queue.indexOf(item) ภายใน filter callback
+   * → indexOf อ้างถึง array ดั้งเดิมที่กำลัง filter อยู่ ได้ index ที่ไม่ถูกต้อง
+   *
+   * แก้ไข: ใช้ Set ของ item references ที่ต้องการลบ แล้ว filter ครั้งเดียว
+   */
   cleanupQueue() {
-    const status = uploadQueue.getStatus();
-    const completed = status.items.filter(i => ['done', 'failed', 'cancelled'].includes(i.status));
-    if (completed.length > 50) {
-      // Keep only last 50 completed items
-      uploadQueue.queue = uploadQueue.queue.filter(item => {
-        if (['done', 'failed', 'cancelled'].includes(item.status)) {
-          return uploadQueue.queue.indexOf(item) >= uploadQueue.queue.length - 50;
-        }
-        return true;
-      });
-      logger.info('Queue cleanup performed', { removed: completed.length - 50 });
-    }
-    return { cleaned: Math.max(0, completed.length - 50) };
+    const MAX = C.QUEUE.MAX_COMPLETED_ITEMS;
+    const completed = uploadQueue.queue.filter(
+      i => ['done', 'failed', 'cancelled'].includes(i.status)
+    );
+
+    if (completed.length <= MAX) return { cleaned: 0 };
+
+    // เก็บ MAX รายการล่าสุด ลบส่วนที่เก่ากว่า
+    const toRemove = new Set(completed.slice(0, completed.length - MAX));
+    const before   = uploadQueue.queue.length;
+    uploadQueue.queue = uploadQueue.queue.filter(item => !toRemove.has(item));
+    const removed  = before - uploadQueue.queue.length;
+
+    logger.info('Queue cleanup performed', { removed, kept: uploadQueue.queue.length });
+    return { cleaned: removed };
   }
 
   cleanupTempFiles() {
@@ -183,28 +199,29 @@ class HealthService {
     const tiktokDir = path.join(__dirname, '../../downloads/tiktok');
     let cleaned = 0;
 
-    [uploadDir, tiktokDir].forEach(dir => {
-      if (!fs.existsSync(dir)) return;
-      const files = fs.readdirSync(dir);
+    for (const dir of [uploadDir, tiktokDir]) {
+      if (!fs.existsSync(dir)) continue;
       const now = Date.now();
-      files.forEach(file => {
+      let files;
+      try { files = fs.readdirSync(dir); } catch (_) { continue; }
+      for (const file of files) {
         const filepath = path.join(dir, file);
         try {
           const stat = fs.statSync(filepath);
-          // Delete files older than 24 hours
-          if (now - stat.mtimeMs > 24 * 60 * 60 * 1000) {
+          if (now - stat.mtimeMs > C.HEALTH.TEMP_FILE_MAX_AGE_MS) {
             fs.unlinkSync(filepath);
             cleaned++;
           }
-        } catch (e) { /* */ }
-      });
-    });
+        } catch (_) {}
+      }
+    }
 
     if (cleaned > 0) logger.info('Temp files cleaned', { count: cleaned });
     return { cleaned };
   }
 
-  // ==================== UTILITIES ====================
+  // ── Utilities ─────────────────────────────────────────────────────
+
   _formatUptime(seconds) {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -215,10 +232,10 @@ class HealthService {
   }
 
   _formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
+    if (!bytes) return '0 B';
+    const k     = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const i     = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 }

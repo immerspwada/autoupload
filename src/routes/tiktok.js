@@ -360,21 +360,25 @@ router.post('/download-and-upload', withTimeout(115000), async (req, res) => {
       publishAt
     });
 
-    // Save to upload history with TikTok video ID for future duplicate detection
-    const tiktokVideoId = extractTikTokVideoId(videoUrl);
-    const allUploads = uploads.load();
-    allUploads.push({
-      filename: downloadResult.filename,
-      filepath: downloadResult.filepath,
-      youtube_id: result.videoId,
-      youtube_url: result.youtubeUrl,
-      uploaded_at: new Date().toISOString(),
-      source: 'tiktok',
-      source_url: videoUrl,
-      tiktok_video_id: tiktokVideoId,
-      deleted: true
+    // ★ Atomic / race-safe record write — safeUpdate serializes concurrent saves
+    const tiktokVideoId      = extractTikTokVideoId(videoUrl);
+    const viralityForHistory = req.body.viralityScore ?? req.body.virality?.score ?? null;
+    await uploads.safeUpdate(arr => {
+      arr.push({
+        filename:        downloadResult.filename,
+        filepath:        downloadResult.filepath,
+        youtube_id:      result.videoId,
+        youtube_url:     result.youtubeUrl,
+        uploaded_at:     new Date().toISOString(),
+        source:          'tiktok',
+        source_url:      videoUrl,
+        tiktok_video_id: tiktokVideoId,
+        title:           videoTitle,
+        viralityScore:   viralityForHistory,
+        deleted:         true,
+      });
+      return arr;
     });
-    uploads.save(allUploads);
 
     // Delete downloaded file only after history is saved successfully
     try {
@@ -806,17 +810,19 @@ router.get('/progress', (req, res) => {
 });
 
 async function processTikTokBatch(videos, options) {
-  const config = settings.load();
-  const privacy = options.privacy || config.privacy || 'public';
+  const config      = settings.load();
+  const privacy     = options.privacy     || config.privacy            || 'public';
   const defaultDesc = options.description || config.defaultDescription || '';
-  const defaultTags = options.tags || config.defaultTags || '';
-  const seoMode = config.seoMode || 'auto';
+  const defaultTags = options.tags        || config.defaultTags        || '';
+  const seoMode     = config.seoMode      || 'auto';
+  const C           = require('../config/constants');
 
-  // Process best candidates first. Prefer the precomputed Smart Batch Score
-  // from the quota filter; fall back to virality for older callers.
   videos.sort((a, b) => (b._smartScore ?? _getViralityScore(b)) - (a._smartScore ?? _getViralityScore(a)));
 
   tiktokProgress = { current: 0, total: videos.length, currentFile: '', status: 'processing', phase: '', results: [] };
+
+  // ★ try/finally รับประกัน status='done' แม้ process crash กลางทาง
+  try {
 
   for (let i = 0; i < videos.length; i++) {
     const video = videos[i];
@@ -916,21 +922,24 @@ async function processTikTokBatch(videos, options) {
         categoryId
       });
 
-      // Save record with tiktok_video_id
+      // ★ Atomic / race-safe record write
       const tiktokVidId = extractTikTokVideoId(video.videoUrl);
-      const allUploads = uploads.load();
-      allUploads.push({
-        filename: downloadResult.filename,
-        filepath: downloadResult.filepath,
-        youtube_id: result.videoId,
-        youtube_url: result.youtubeUrl,
-        uploaded_at: new Date().toISOString(),
-        source: 'tiktok',
-        source_url: video.videoUrl,
-        tiktok_video_id: tiktokVidId,
-        deleted: true
+      await uploads.safeUpdate(arr => {
+        arr.push({
+          filename:        downloadResult.filename,
+          filepath:        downloadResult.filepath,
+          youtube_id:      result.videoId,
+          youtube_url:     result.youtubeUrl,
+          uploaded_at:     new Date().toISOString(),
+          source:          'tiktok',
+          source_url:      video.videoUrl,
+          tiktok_video_id: tiktokVidId,
+          title:           videoTitle,
+          viralityScore:   _getViralityScore(video),
+          deleted:         true,
+        });
+        return arr;
       });
-      uploads.save(allUploads);
 
       // Clean up downloaded file
       try {
@@ -970,22 +979,24 @@ async function processTikTokBatch(videos, options) {
 
     // Delay between operations to avoid rate limiting
     if (i < videos.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, C.TIKTOK.BATCH_UPLOAD_DELAY_MS));
     }
   }
 
-  tiktokProgress.status = 'done';
-  tiktokProgress.phase = '';
+  } finally {
+    // ★ รับประกัน status reset เสมอ — ป้องกัน SSE progress ค้างถ้า crash กลางทาง
+    tiktokProgress.status = 'done';
+    tiktokProgress.phase  = '';
+  }
   
-  // Log final quota status
   const finalQuota = youtubeService.getQuotaStatus();
   logger.info('Batch upload completed', {
-    total: videos.length,
+    total:      videos.length,
     successful: tiktokProgress.results.filter(r => r.success).length,
-    failed: tiktokProgress.results.filter(r => !r.success && !r.skipped).length,
-    skipped: tiktokProgress.results.filter(r => r.skipped).length,
-    quotaUsed: finalQuota.used + '/' + finalQuota.limit,
-    quotaRemaining: finalQuota.uploadsRemaining
+    failed:     tiktokProgress.results.filter(r => !r.success && !r.skipped).length,
+    skipped:    tiktokProgress.results.filter(r => r.skipped).length,
+    quotaUsed:  `${finalQuota.used}/${finalQuota.limit}`,
+    quotaRemaining: finalQuota.uploadsRemaining,
   });
 }
 

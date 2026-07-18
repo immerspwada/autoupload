@@ -169,7 +169,8 @@ class YouTubeService {
       access_type: 'offline',
       scope: [
         'https://www.googleapis.com/auth/youtube.upload',
-        'https://www.googleapis.com/auth/youtube.readonly'
+        'https://www.googleapis.com/auth/youtube.readonly',
+        'https://www.googleapis.com/auth/yt-analytics.readonly'
       ],
       prompt: 'consent',
       state,
@@ -327,20 +328,56 @@ class YouTubeService {
       requestBody.status.publishAt = publishAt;
     }
 
-    const response = await youtube.videos.insert({
-      part: 'snippet,status',
-      requestBody,
-      media: {
-        body: fs.createReadStream(filepath)
-      }
-    }, {
-      onUploadProgress: (evt) => {
-        if (onProgress) {
-          const progress = Math.round((evt.bytesRead / fileSize) * 100);
-          onProgress(progress, evt.bytesRead, fileSize);
+    // ★ Retry with exponential backoff for 429 / 5xx transient errors
+    // Does NOT retry quota errors (403 rateLimitExceeded) — those need to wait for reset
+    const MAX_RETRIES = 3;
+    let lastError = null;
+    let response = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        response = await youtube.videos.insert({
+          part: 'snippet,status',
+          requestBody,
+          media: {
+            body: fs.createReadStream(filepath)
+          }
+        }, {
+          onUploadProgress: (evt) => {
+            if (onProgress) {
+              const progress = Math.round((evt.bytesRead / fileSize) * 100);
+              onProgress(progress, evt.bytesRead, fileSize);
+            }
+          }
+        });
+        lastError = null;
+        break; // success
+      } catch (err) {
+        lastError = err;
+        const statusCode = err?.response?.status || err?.code;
+        const isQuotaError = statusCode === 403 && err?.message?.toLowerCase().includes('quota');
+        const isRetryable = statusCode === 429 || statusCode === 500 || statusCode === 503;
+
+        if (isQuotaError) {
+          // Hard quota error — propagate immediately, do not retry
+          throw err;
         }
+
+        if (isRetryable && attempt < MAX_RETRIES) {
+          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s
+          logger.warn(`[YouTube] Upload attempt ${attempt} failed (${statusCode}), retrying in ${delay}ms`, {
+            title, error: err.message
+          });
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+
+        // Non-retryable or exhausted retries
+        throw err;
       }
-    });
+    }
+
+    if (!response) throw lastError;
 
     const videoId = response.data.id;
     const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
