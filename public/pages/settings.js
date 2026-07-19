@@ -1,4 +1,11 @@
 // Page: Settings (/settings)
+function applyTheme(theme) {
+  document.body.classList.remove('theme-minimal-modern', 'theme-dark-pro', 'theme-youtube-brand');
+  if (theme !== 'dark-pro') {
+    document.body.classList.add(`theme-${theme}`);
+  }
+}
+
 export function render() {
   return `
     <div class="settings-page">
@@ -13,6 +20,25 @@ export function render() {
           <h3>General</h3>
         </div>
         <div class="card-body">
+          <!-- Theme Switcher -->
+          <div class="form-group">
+            <label>Theme</label>
+            <div class="theme-selector">
+              <button type="button" class="theme-btn" data-theme="minimal-modern">
+                <div class="theme-preview" style="background: linear-gradient(135deg, #f8fafc, #e2e8f0);"></div>
+                <span>Minimal Modern</span>
+              </button>
+              <button type="button" class="theme-btn" data-theme="dark-pro">
+                <div class="theme-preview" style="background: linear-gradient(135deg, #020617, #111827);"></div>
+                <span>Dark Pro</span>
+              </button>
+              <button type="button" class="theme-btn" data-theme="youtube-brand">
+                <div class="theme-preview" style="background: linear-gradient(135deg, #ff000015, #ff000025);"></div>
+                <span>YouTube Brand</span>
+              </button>
+            </div>
+          </div>
+
           <form id="settings-form">
             <div class="settings-row">
               <div class="form-group">
@@ -121,6 +147,20 @@ export function render() {
 }
 
 export async function init() {
+  // Theme handling
+  const savedTheme = localStorage.getItem('theme') || 'dark-pro';
+  applyTheme(savedTheme);
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.theme === savedTheme);
+    btn.addEventListener('click', () => {
+      applyTheme(btn.dataset.theme);
+      document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      localStorage.setItem('theme', btn.dataset.theme);
+      window.app.showToast('Theme updated!', 'success');
+    });
+  });
+
   // General settings
   try {
     const res = await fetch('/api/settings');

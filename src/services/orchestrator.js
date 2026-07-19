@@ -22,6 +22,9 @@ class Orchestrator {
   constructor() {
     this.broadcast = null; // will be set by server.js
     this._wired = false;
+    // Debounce queue progress broadcasts
+    this._queueProgressDebounce = null;
+    this._pendingQueueProgress = null;
   }
 
   // เรียกครั้งเดียวจาก server.js หลัง WebSocket พร้อม
@@ -130,10 +133,19 @@ class Orchestrator {
       }
     });
 
-    // Also broadcast queue progress
+    // Also broadcast queue progress (debounced)
     eventBus.on('queue:progress', (status) => {
       if (this.broadcast) {
-        this.broadcast('queue:progress', status);
+        this._pendingQueueProgress = status;
+        if (this._queueProgressDebounce) {
+          clearTimeout(this._queueProgressDebounce);
+        }
+        this._queueProgressDebounce = setTimeout(() => {
+          if (this._pendingQueueProgress && this.broadcast) {
+            this.broadcast('queue:progress', this._pendingQueueProgress);
+            this._pendingQueueProgress = null;
+          }
+        }, 200); // 200ms debounce
       }
     });
 

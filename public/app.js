@@ -19,8 +19,20 @@ let ws = null;
 let wsReconnectTimer = null;
 let currentPage = null;
 
+// Theme handling
+function applyTheme(theme) {
+  document.body.classList.remove('theme-minimal-modern', 'theme-dark-pro', 'theme-youtube-brand');
+  if (theme !== 'dark-pro') {
+    document.body.classList.add(`theme-${theme}`);
+  }
+}
+
 // ==================== INIT ====================
 document.addEventListener('DOMContentLoaded', () => {
+  // Apply saved theme
+  const savedTheme = localStorage.getItem('theme') || 'dark-pro';
+  applyTheme(savedTheme);
+
   initWebSocket();
   initNav();
   checkAuth();

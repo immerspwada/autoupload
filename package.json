@@ -8,9 +8,15 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "docker:build": "docker build -t autoupload:latest .",
+    "docker:run": "docker compose up -d",
+    "docker:logs": "docker compose logs -f",
+    "docker:stop": "docker compose down",
+    "setup": "bash scripts/setup-cloud.sh"
   },
   "dependencies": {
+    "compression": "^1.8.1",
     "express": "^4.22.2",
     "googleapis": "^173.0.0",
     "multer": "^1.4.5-lts.1",

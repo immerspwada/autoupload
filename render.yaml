@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────
+# Render.com deployment config — YouTube Auto Uploader
+# ⚠️ Render Free tier sleeps after 15 min — ใช้ Starter ($7/mo) ขึ้นไป
+# ─────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: autoupload
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # starter = $7/mo, ไม่ sleep, 512MB RAM
+    region: singapore      # ใกล้ Thailand
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: "true"
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /usr/bin/chromium
+      - key: APP_URL
+        fromService:
+          name: autoupload
+          type: web
+          property: host
+
+    disk:
+      name: autoupload-data
+      mountPath: /app/data
+      sizeGB: 1
+
+    healthCheckPath: /api/health
+    autoDeploy: true
+
+    # Render ไม่รองรับ volume หลายอัน — ใช้ /app/data เป็น root
+    # downloads จะอยู่ใน /app/data/downloads (ต้องแก้ path ใน constants.js)

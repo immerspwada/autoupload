@@ -89,19 +89,35 @@ class YouTubeService {
 
   /**
    * Legacy OAuth2 client (client_secret.json + token.json)
+   * ★ Cloud fallback: ถ้าไม่มีไฟล์ ให้อ่านจาก GOOGLE_CLIENT_ID/SECRET env var
    */
   _getLegacyOAuth2Client() {
     if (!this.credentials) {
-      if (!fs.existsSync(CRED_PATH)) return null;
-      this.credentials = JSON.parse(fs.readFileSync(CRED_PATH, 'utf8'));
+      // Priority 1: ไฟล์ client_secret.json
+      if (fs.existsSync(CRED_PATH)) {
+        this.credentials = JSON.parse(fs.readFileSync(CRED_PATH, 'utf8'));
+      // Priority 2: env var GOOGLE_CREDENTIALS_JSON (full JSON string)
+      } else if (process.env.GOOGLE_CREDENTIALS_JSON) {
+        this.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+      // Priority 3: individual GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET env vars
+      } else if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+        this.credentials = {
+          web: {
+            client_id: process.env.GOOGLE_CLIENT_ID,
+            client_secret: process.env.GOOGLE_CLIENT_SECRET,
+            redirect_uris: ['http://localhost:3000/oauth2callback'],
+          }
+        };
+      } else {
+        return null;
+      }
     }
 
     if (!this.oauth2Client) {
       const cred = this.credentials.installed || this.credentials.web;
-      // Support cloud deploy: use APP_URL env var if set, otherwise fallback to client_secret URIs
-      const appUrl = process.env.APP_URL || process.env.RAILWAY_PUBLIC_DOMAIN
-        ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-        : null;
+      // Resolve redirect URI: APP_URL > RAILWAY_PUBLIC_DOMAIN > client_secret URIs > localhost
+      const appUrl = process.env.APP_URL ||
+        (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null);
       const redirectUri = appUrl
         ? `${appUrl}/oauth2callback`
         : (cred.redirect_uris && cred.redirect_uris[0]) || 'http://localhost:3000/oauth2callback';

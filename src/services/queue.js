@@ -39,8 +39,19 @@ class UploadQueue extends EventEmitter {
       filename: options.filename || 'unknown',
     };
 
-    this.queue.push(item);
-    this.queue.sort((a, b) => b.priority - a.priority);
+    // Insert in sorted position (descending priority) to avoid full sort
+    let inserted = false;
+    for (let i = 0; i < this.queue.length; i++) {
+      if (this.queue[i].priority < item.priority) {
+        this.queue.splice(i, 0, item);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) {
+      this.queue.push(item);
+    }
+
     this.emit('added', item);
     this._process();
     return item.id;

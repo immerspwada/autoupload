@@ -506,7 +506,7 @@ class SEOService {
       channelStage,
       stageLabel: stageWeights.label,
       intent: primaryIntent ? primaryIntent.label : 'ทั่วไป',
-      angle: primaryIntent ? primaryIntent.angle : this._defaultOpportunityAngle(categoryId, virality, channelStage),
+      angle: primaryIntent ? primaryIntent.angle : this._defaultOpportunityAngle(categoryId, virality, channelStage, tiktokData),
       reasons: reasons.slice(0, 4),
       warnings: warnings.slice(0, 3),
       recommendedAction: this._opportunityRecommendation(score, validation, channelStage)
@@ -842,7 +842,10 @@ class SEOService {
       defaultTags: config.defaultTags || '',
       titleTemplate: config.titleTemplate || '',
       channelDescription: config.channelDescription || '',
-      seoMode: config.seoMode || 'auto' // auto, manual, disabled
+      seoMode: config.seoMode || 'auto', // auto, manual, disabled
+      channelStage: config.channelStage || 'early_stage',
+      autoSchedule: config.autoSchedule || false,
+      preferredPublishHour: config.preferredPublishHour || null
     };
   }
 
@@ -909,8 +912,11 @@ class SEOService {
 
     const words = cleaned.split(/\s+/).filter(w => w.length > 2 && w.length < 25);
     
-    // Remove common stop words
-    const stopWords = new Set(['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'with', 'this', 'that', 'from', 'have', 'was', 'were', 'been', 'being']);
+    // Remove common stop words (English + Thai)
+    const stopWords = new Set([
+      'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'with', 'this', 'that', 'from', 'have', 'was', 'were', 'been', 'being',
+      'ก็', 'แล้ว', 'กับ', 'ให้', 'จะ', 'ได้', 'ไป', 'มา', 'อยู่', 'ที่', 'ของ', 'ใน', 'บน', 'ใต้', 'หน้า', 'หลัง', 'นี้', 'นั้น', 'เหล่า', 'ทั้ง', 'อีก', 'แล้วก็', 'หรือ', 'แต่', 'ถ้า', 'เพราะ', 'ด้วย', 'มาก', 'น้อย', 'จริง', 'เลย', 'แค่', 'เพียง', 'อะไร', 'ทุก', 'ทั้งหมด', 'นิด', 'หน่อย', 'ก่อน', 'หลัง', 'ว่า', 'ว่า', 'เห็น', 'ได้ยิน', 'ทำ', 'ทำไม', 'ยัง', 'กี่', 'ครั้ง', 'เวลา', 'วัน', 'เดือน', 'ปี', 'ที่ไหน', 'ไหน'
+    ]);
     return words.filter(w => !stopWords.has(w)).slice(0, 20);
   }
 
@@ -933,7 +939,8 @@ class SEOService {
     return Math.max(0, Math.min(100, Math.round(value)));
   }
 
-  _defaultOpportunityAngle(categoryId, virality, channelStage = 'monetized') {
+  _defaultOpportunityAngle(categoryId, virality, channelStage = 'monetized', tiktokData = {}) {
+    const duration = tiktokData.duration || 0;
     if (channelStage === 'early_stage') {
       if ([26, 27, 28].includes(categoryId)) return 'คลิป tutorial/howto ดีมากสำหรับช่องใหม่ — คนดูนานและมักติดตามเพื่อดูตอนต่อไป';
       if ((virality?.score || 0) >= 75) return 'คลิปแรงมาก — เพิ่ม CTA "กด Subscribe เพื่อดูคลิปแบบนี้ทุกวัน" ท้ายคลิป';

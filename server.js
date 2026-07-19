@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path');
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const compression = require('compression');
 
 const logger      = require('./src/utils/logger');
 const C           = require('./src/config/constants');
@@ -76,10 +77,18 @@ orchestrator.init(broadcast);
 // Remove legacy direct queue→websocket wiring since orchestrator handles it
 
 // ==================== Middleware ====================
+app.use(compression()); // Compress all responses
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Static file serving with cache headers
+const staticOptions = {
+  maxAge: '1d', // 1 day cache for static assets
+  etag: true,
+  lastModified: true
+};
+app.use(express.static(path.join(__dirname, 'public'), staticOptions));
 
 // ==================== API Routes ====================
 app.use('/api/auth', authRoutes);
