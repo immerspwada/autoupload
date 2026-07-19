@@ -93,13 +93,10 @@ class YouTubeService {
    */
   _getLegacyOAuth2Client() {
     if (!this.credentials) {
-      // Priority 1: ไฟล์ client_secret.json
-      if (fs.existsSync(CRED_PATH)) {
-        this.credentials = JSON.parse(fs.readFileSync(CRED_PATH, 'utf8'));
-      // Priority 2: env var GOOGLE_CREDENTIALS_JSON (full JSON string)
-      } else if (process.env.GOOGLE_CREDENTIALS_JSON) {
+      // Priority 1: env var GOOGLE_CREDENTIALS_JSON (cloud deploy — สูงสุด)
+      if (process.env.GOOGLE_CREDENTIALS_JSON) {
         this.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-      // Priority 3: individual GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET env vars
+      // Priority 2: individual env vars
       } else if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
         this.credentials = {
           web: {
@@ -108,6 +105,9 @@ class YouTubeService {
             redirect_uris: ['http://localhost:3000/oauth2callback'],
           }
         };
+      // Priority 3: ไฟล์ client_secret.json (local dev fallback)
+      } else if (fs.existsSync(CRED_PATH)) {
+        this.credentials = JSON.parse(fs.readFileSync(CRED_PATH, 'utf8'));
       } else {
         return null;
       }
