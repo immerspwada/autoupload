@@ -1,36 +1,26 @@
-version: '3.9'
+version: '3.8'
 
 services:
   autoupload:
     build: .
     container_name: autoupload
-    restart: unless-stopped
+    restart: always
     ports:
       - "3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./downloads:/app/downloads
+      - ./logs:/app/logs
+      - ./.uploads:/app/.uploads
+      - ./client_secret.json:/app/client_secret.json:ro
     environment:
       - NODE_ENV=production
       - PORT=3000
       - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-      # ถ้า deploy บน VPS ให้ uncomment และใส่ domain จริง
-      # - APP_URL=https://yourdomain.com
-    volumes:
-      # Persistent data — survives container restart / redeploy
-      - ./data:/app/data
-      - ./downloads:/app/downloads
-      - ./uploads:/app/uploads
-      - ./logs:/app/logs
-      - ./.uploads:/app/.uploads
-      # ★ Mount client_secret.json ไม่ embed ใน image (ความปลอดภัย)
-      - ./client_secret.json:/app/client_secret.json:ro
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', r => process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 20s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "50m"
-        max-file: "5"

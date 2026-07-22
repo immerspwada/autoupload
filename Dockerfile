@@ -4,9 +4,10 @@
 # ─────────────────────────────────────────────────────────────────
 FROM node:20-slim
 
-# Install system deps for puppeteer + chromium + yt-dlp
+# Install system deps for puppeteer + chromium + yt-dlp + ffmpeg
 RUN apt-get update && apt-get install -y \
     chromium \
+    ffmpeg \
     fonts-ipafont-gothic \
     fonts-wqy-zenhei \
     fonts-thai-tlwg \
@@ -34,7 +35,7 @@ RUN npm ci --omit=dev
 COPY . .
 
 # Create persistent directories (will be mounted as volumes)
-RUN mkdir -p data downloads/tiktok uploads logs .uploads
+RUN mkdir -p data downloads/tiktok downloads/transformed downloads/temp uploads logs .uploads assets
 
 # Non-root user for security
 RUN useradd -r -m -u 1001 appuser \
