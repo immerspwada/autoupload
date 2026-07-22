@@ -14,7 +14,6 @@ const uploadQueue    = require('./src/services/queue');
 const scheduler      = require('./src/services/scheduler');
 const healthService  = require('./src/services/health');
 const orchestrator   = require('./src/services/orchestrator');
-const eventBus       = require('./src/services/eventbus');
 
 // Routes
 const authRoutes = require('./src/routes/auth');
@@ -103,6 +102,7 @@ app.use('/api/activity', activityRoutes);
 app.use('/api/accounts', require('./src/routes/accounts'));
 app.use('/api/watchlist', require('./src/routes/watchlist'));
 app.use('/api/analytics', require('./src/routes/analytics'));
+app.use('/api/transform', require('./src/routes/transform'));
 
 // Event Bus API
 app.get('/api/events/history', (req, res) => {
@@ -114,14 +114,11 @@ app.get('/api/events/rules', (req, res) => {
   res.json(orchestrator.getRules());
 });
 
-// ★ /api/settings — delegate to /api/files/settings
-// ลบ inline handler ที่ซ้ำออก เหลือแค่ proxy ไป files route ที่ถูกต้อง
+// ★ /api/settings — proxy to files route
 app.get('/api/settings',  (req, res) => res.redirect(307, '/api/files/settings'));
 app.post('/api/settings', (req, res) => res.redirect(307, '/api/files/settings'));
 
-// Legacy routes — removed upload/files/history/queue/scheduler pages
-// These routes are kept for backward compatibility but return 404 if removed pages are accessed
-
+// Legacy upload history (backward compat)
 app.get('/api/history', (req, res) => {
   const { uploads } = require('./src/utils/store');
   res.json(uploads.load().reverse());

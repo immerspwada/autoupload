@@ -330,13 +330,12 @@ class EventBus extends EventEmitter {
       priority: 8,
       then: (payload, bus) => {
         // Track source-specific stats for revenue analysis
+        // ★ ไม่ dispatch stats:increment ซ้ำ — Rule 1 จัดการ sourceStats แล้วผ่าน payload.source
+        // Rule นี้สำหรับ future use: track SEO quality metrics, virality feedback ฯลฯ
         if (payload.source === 'tiktok') {
-          bus.dispatch('stats:increment', {
-            type: 'tiktok_upload',
-            filename: payload.filename,
-            size: payload.size || 0,
-            source: 'tiktok'
-          });
+          // Placeholder for future SEO performance tracking
+          // e.g. compare predicted virality vs actual YouTube performance
+          logger.debug('[EventBus] TikTok upload tracked for SEO analysis', { filename: payload.filename });
         }
       }
     });

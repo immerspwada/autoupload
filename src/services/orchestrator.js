@@ -39,6 +39,8 @@ class Orchestrator {
     this._wireNotifications();
     this._wireStats();
     this._wireDashboard();
+    this._wireWatchlistProgress();
+    this._wireVideoTransform();
 
     logger.info('[Orchestrator] All services wired to EventBus');
   }
@@ -185,7 +187,7 @@ class Orchestrator {
       if (!allStats.dailyStats) allStats.dailyStats = {};
       if (!allStats.dailyStats[today]) allStats.dailyStats[today] = { uploads: 0, failures: 0, size: 0, tiktok: 0 };
       if (!allStats.uploadsByHour) allStats.uploadsByHour = {};
-      if (!allStats.sourceStats) allStats.sourceStats = { tiktok: 0, folder: 0, drop: 0 };
+      if (!allStats.sourceStats) allStats.sourceStats = { tiktok: 0, folder: 0, drop: 0, tiktok_watchlist: 0 };
 
       if (payload.type === 'upload') {
         allStats.totalUploads = (allStats.totalUploads || 0) + 1;
@@ -196,13 +198,13 @@ class Orchestrator {
         if (payload.source && allStats.sourceStats[payload.source] !== undefined) {
           allStats.sourceStats[payload.source]++;
         }
+        // Track TikTok daily count
+        if (payload.source === 'tiktok' || payload.source === 'tiktok_watchlist') {
+          allStats.dailyStats[today].tiktok = (allStats.dailyStats[today].tiktok || 0) + 1;
+        }
       } else if (payload.type === 'failure') {
         allStats.failedUploads = (allStats.failedUploads || 0) + 1;
         allStats.dailyStats[today].failures++;
-      } else if (payload.type === 'tiktok_upload') {
-        // TikTok-specific tracking
-        allStats.sourceStats.tiktok = (allStats.sourceStats.tiktok || 0) + 1;
-        allStats.dailyStats[today].tiktok = (allStats.dailyStats[today].tiktok || 0) + 1;
       }
 
       allStats.uploadsByHour[hour] = (allStats.uploadsByHour[hour] || 0) + 1;
@@ -217,6 +219,60 @@ class Orchestrator {
     eventBus.on('dashboard:refresh', (payload) => {
       if (this.broadcast) {
         this.broadcast('dashboard:refresh', { reason: payload.reason });
+      }
+    });
+  }
+
+  // ==================== WIRE: Watchlist Progress → WebSocket ====================
+  // ★ ส่ง progress ของ watchlist run ผ่าน WebSocket ไปให้ frontend
+  //   ทำให้ user เห็น progress แม้ Scheduler จะเป็นคนเรียก (ไม่ใช่แค่ manual run)
+  _wireWatchlistProgress() {
+    const watchlistService = require('./watchlist');
+    watchlistService.on('progress', (state) => {
+      if (this.broadcast) {
+        this.broadcast('watchlist:progress', state);
+      }
+    });
+  }
+
+  // ==================== WIRE: Video Transform → WebSocket ====================
+  _wireVideoTransform() {
+    const videoTransform = require('./videoTransform');
+    
+    videoTransform.on('transform:start', (data) => {
+      if (this.broadcast) {
+        this.broadcast('transform:start', data);
+      }
+    });
+
+    videoTransform.on('transform:progress', (data) => {
+      if (this.broadcast) {
+        this.broadcast('transform:progress', data);
+      }
+    });
+
+    videoTransform.on('transform:complete', (data) => {
+      if (this.broadcast) {
+        this.broadcast('transform:complete', data);
+      }
+      eventBus.dispatch('stats:increment', { type: 'transform', filename: data.input });
+    });
+
+    videoTransform.on('transform:failed', (data) => {
+      if (this.broadcast) {
+        this.broadcast('transform:failed', data);
+      }
+    });
+
+    videoTransform.on('compilation:start', (data) => {
+      if (this.broadcast) {
+        this.broadcast('compilation:start', data);
+      }
+    });
+
+    videoTransform.on('compilation:complete', (data) => {
+      if (this.broadcast) {
+        this.broadcast('compilation:complete', data);
       }
     });
   }

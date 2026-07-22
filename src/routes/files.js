@@ -14,18 +14,11 @@ const fs      = require('fs');
 const path    = require('path');
 const { settings, uploads } = require('../utils/store');
 const orchestrator = require('../services/orchestrator');
+const { formatBytes: formatFileSize } = require('../utils/format');
 
 const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.mpeg', '.mpg'];
 
 const DOWNLOADS_BASE = path.resolve(process.cwd(), 'downloads');
-
-function formatFileSize(bytes) {
-  if (bytes === 0) return '0 Bytes';
-  const k     = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i     = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
 
 /**
  * ★ Validate that a resolved path stays inside an allowed base directory.

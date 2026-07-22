@@ -135,6 +135,32 @@ const WATCH_TIME_SIGNALS = {
 // VALUE_INTENTS + watch time weight
 const FILLER_WORDS = ['fyp', 'foryou', 'foryoupage', 'viral', 'trending', 'xyzbca', 'tiktok', '#'];
 
+// ★ RPM by Category (USD per 1000 views) — อ้างอิงจาก industry average
+// ข้อมูลจาก YouTube Analytics benchmark ปี 2024-2025
+const CATEGORY_RPM = {
+  28: { min: 3.5, max: 12, avg: 6.8, label: 'Tech/Software' },      // 💰💰💰 สูงสุด
+  27: { min: 2.8, max: 9,  avg: 5.2, label: 'Education' },          // 💰💰💰
+  26: { min: 2.2, max: 7,  avg: 4.1, label: 'Howto & Style' },      // 💰💰
+  25: { min: 1.8, max: 5,  avg: 3.0, label: 'News & Politics' },    // 💰💰
+  20: { min: 1.5, max: 6,  avg: 3.2, label: 'Gaming' },             // 💰💰
+  17: { min: 1.2, max: 4,  avg: 2.3, label: 'Sports' },             // 💰
+  19: { min: 1.0, max: 3.5, avg: 2.0, label: 'Travel & Events' },   // 💰
+  10: { min: 0.8, max: 2.5, avg: 1.5, label: 'Music' },             // 💰
+  24: { min: 0.6, max: 2.0, avg: 1.2, label: 'Entertainment' },     // 💰
+  23: { min: 0.5, max: 1.8, avg: 1.0, label: 'Comedy' },            // 💰
+  15: { min: 0.4, max: 1.5, avg: 0.8, label: 'Pets & Animals' },    // 💰
+  22: { min: 0.5, max: 1.5, avg: 0.9, label: 'People & Blogs' },    // 💰 (default)
+};
+
+// ★ Intent → RPM multiplier (บอกว่า intent นี้มี RPM เท่าไหร่เทียบกับหมวด)
+const INTENT_RPM_BOOST = {
+  high_rpm: 2.5,      // Finance/Tech = RPM x2.5
+  howto: 1.8,         // Tutorial = RPM x1.8
+  watch_time_builder: 1.4, // คนดูนาน = ads โชว์นาน = RPM x1.4
+  trust_builder: 1.2, // Review = RPM x1.2
+  broad_viral: 0.8,   // ไวรัลแต่ RPM ต่ำ = x0.8
+};
+
 const VALUE_INTENTS = [
   {
     id: 'high_rpm',
@@ -143,7 +169,8 @@ const VALUE_INTENTS = [
     revenue: 30,
     follower: 8,
     seo: 18,
-    angle: 'ทำเป็นคลิปให้ความรู้/รีวิวที่ตอบคำถามชัดเจน จะมีโอกาส RPM สูงกว่า entertainment ทั่วไป'
+    angle: 'ทำเป็นคลิปให้ความรู้/รีวิวที่ตอบคำถามชัดเจน จะมีโอกาส RPM สูงกว่า entertainment ทั่วไป',
+    rpmBoost: INTENT_RPM_BOOST.high_rpm
   },
   {
     id: 'howto',
@@ -152,7 +179,8 @@ const VALUE_INTENTS = [
     revenue: 18,
     follower: 16,
     seo: 30,
-    angle: 'ตั้ง title แบบตอบปัญหา เช่น วิธี..., เทคนิค..., สูตร... เพื่อเก็บ search traffic ระยะยาว'
+    angle: 'ตั้ง title แบบตอบปัญหา เช่น วิธี..., เทคนิค..., สูตร... เพื่อเก็บ search traffic ระยะยาว',
+    rpmBoost: INTENT_RPM_BOOST.howto
   },
   {
     id: 'trust_builder',
@@ -161,7 +189,8 @@ const VALUE_INTENTS = [
     revenue: 12,
     follower: 28,
     seo: 12,
-    angle: 'ใช้ CTA ให้ติดตามเพื่อดูตอนต่อไป/ผลลัพธ์จริง จะช่วยเปลี่ยน viewer เป็น subscriber'
+    angle: 'ใช้ CTA ให้ติดตามเพื่อดูตอนต่อไป/ผลลัพธ์จริง จะช่วยเปลี่ยน viewer เป็น subscriber',
+    rpmBoost: INTENT_RPM_BOOST.trust_builder
   },
   {
     id: 'broad_viral',
@@ -170,7 +199,8 @@ const VALUE_INTENTS = [
     revenue: 8,
     follower: 18,
     seo: 8,
-    angle: 'เหมาะกับเพิ่ม reach และผู้ติดตาม แต่ควรเพิ่มบริบท/keyword เพื่อไม่ให้เป็น reused-content บางเกินไป'
+    angle: 'เหมาะกับเพิ่ม reach และผู้ติดตาม แต่ควรเพิ่มบริบท/keyword เพื่อไม่ให้เป็น reused-content บางเกินไป',
+    rpmBoost: INTENT_RPM_BOOST.broad_viral
   },
   {
     id: 'watch_time_builder',
@@ -190,7 +220,8 @@ const VALUE_INTENTS = [
     revenue: 10,
     follower: 22,
     seo: 15,
-    angle: 'คลิปประเภทนี้คนดูนานกว่าค่าเฉลี่ย — เพิ่ม hook ใน 5 วิแรกและ CTA กลางคลิปเพื่อดึงให้ดูจนจบ'
+    angle: 'คลิปประเภทนี้คนดูนานกว่าค่าเฉลี่ย — เพิ่ม hook ใน 5 วิแรกและ CTA กลางคลิปเพื่อดึงให้ดูจนจบ',
+    rpmBoost: INTENT_RPM_BOOST.watch_time_builder
   }
 ];
 
@@ -371,6 +402,256 @@ class SEOService {
   }
 
   /**
+   * ★ Estimate revenue จาก TikTok data
+   * ใช้ category RPM + intent boost + engagement metrics
+   * Returns { estimatedRPM, estimatedRevenue1K, estimatedRevenue10K, breakdown }
+   */
+  estimateRevenue(tiktokData, options = {}) {
+    const categoryId = options.categoryId || this.detectCategory(tiktokData);
+    const categoryRpm = CATEGORY_RPM[categoryId] || CATEGORY_RPM[22]; // default to People & Blogs
+    
+    // หา primary intent
+    const text = [
+      tiktokData.desc,
+      tiktokData.title,
+      ...(Array.isArray(tiktokData.matchedKeywords) ? tiktokData.matchedKeywords : [])
+    ].filter(Boolean).join(' ').toLowerCase();
+    
+    const matchedIntents = VALUE_INTENTS
+      .map(intent => {
+        const hits = intent.keywords.filter(k => text.includes(k.toLowerCase()));
+        return hits.length ? { ...intent, hits } : null;
+      })
+      .filter(Boolean);
+    
+    const primaryIntent = matchedIntents[0];
+    const intentBoost = primaryIntent?.rpmBoost || 1.0;
+    
+    // Base RPM จาก category
+    let baseRpm = categoryRpm.avg;
+    
+    // Adjust by engagement (high engagement = higher CPM)
+    const views = tiktokData.playCount || 0;
+    const likes = tiktokData.likeCount || 0;
+    const comments = tiktokData.commentCount || 0;
+    const shares = tiktokData.shareCount || 0;
+    
+    if (views > 0) {
+      const engagementRate = (likes + comments + shares) / views;
+      // High engagement (>=8%) = +30% RPM
+      // Medium (4-8%) = +15%
+      // Low (<2%) = -10%
+      if (engagementRate >= 0.08) baseRpm *= 1.3;
+      else if (engagementRate >= 0.04) baseRpm *= 1.15;
+      else if (engagementRate < 0.02) baseRpm *= 0.9;
+    }
+    
+    // Apply intent boost
+    const estimatedRpm = baseRpm * intentBoost;
+    
+    // Estimate revenue scenarios
+    const estimatedRevenue1K = estimatedRpm; // $ per 1000 views
+    const estimatedRevenue10K = estimatedRpm * 10;
+    const estimatedRevenue100K = estimatedRpm * 100;
+    
+    // Confidence level
+    let confidence = 'medium';
+    if (views >= 100000) confidence = 'high';
+    else if (views < 1000) confidence = 'low';
+    
+    return {
+      estimatedRpm: +estimatedRpm.toFixed(2),
+      estimatedRevenue1K: +estimatedRevenue1K.toFixed(2),
+      estimatedRevenue10K: +estimatedRevenue10K.toFixed(2),
+      estimatedRevenue100K: +estimatedRevenue100K.toFixed(2),
+      category: categoryRpm.label,
+      categoryRpmRange: `$${categoryRpm.min} - $${categoryRpm.max}`,
+      intentBoost: intentBoost > 1 ? `+${Math.round((intentBoost - 1) * 100)}%` : intentBoost < 1 ? `${Math.round((1 - intentBoost) * 100)}% ลด` : 'ปกติ',
+      primaryIntent: primaryIntent?.label || null,
+      confidence,
+      breakdown: {
+        baseRpm: +baseRpm.toFixed(2),
+        categoryAvg: categoryRpm.avg,
+        engagementBonus: views > 0 ? (((likes + comments + shares) / views) * 100).toFixed(1) + '%' : 'N/A'
+      },
+      // ★ Quick estimate format for UI
+      quickEstimate: `$${estimatedRpm.toFixed(2)} per 1K views`
+    };
+  }
+
+  /**
+   * ★ Generate actionable recommendations
+   * แปลง score/analysis เป็น TODO list ที่ user ทำตามได้เลย
+   */
+  generateActionableRecommendations(tiktokData, options = {}) {
+    const validation = tiktokData.validation || this.validateForMonetization(tiktokData, tiktokData.desc || '');
+    const virality = tiktokData.virality || this.calculateViralityScore(tiktokData);
+    const opportunity = tiktokData.opportunity || this.analyzeOpportunity(tiktokData, options);
+    const revenue = this.estimateRevenue(tiktokData, options);
+    const categoryId = this.detectCategory(tiktokData);
+    
+    const actions = [];
+    
+    // 1. Policy/Monetization actions (highest priority)
+    if (validation.status === 'blocked') {
+      actions.push({
+        priority: 1,
+        category: 'policy',
+        action: 'ข้ามคลิปนี้ — เนื้อหาผิดนโยบาย YouTube ชัดเจน',
+        reason: validation.issues.find(i => i.level === 'error')?.message || 'ตรวจพบคำที่เสี่ยง policy violation',
+        impact: 'ป้องกัน demonetization หรือ channel strike',
+        auto: false
+      });
+      return { actions, canProceed: false };
+    }
+    
+    if (validation.status === 'warning') {
+      actions.push({
+        priority: 1,
+        category: 'policy',
+        action: 'ตรวจสอบ title/description ก่อนอัป — มีคำเสี่ยง demonetize',
+        reason: validation.issues.find(i => i.level === 'warning')?.message || 'พบคำที่อาจถูก flag',
+        impact: 'ลดความเสี่ยง demonetization',
+        auto: false,
+        suggestion: `ลบหรือเปลี่ยนคำ: ${validation.issues.filter(i => i.level === 'warning').map(i => i.message).join(', ')}`
+      });
+    }
+    
+    // 2. SEO/Metadata actions
+    const title = tiktokData.desc || tiktokData.title || '';
+    if (title.length < 25) {
+      actions.push({
+        priority: 2,
+        category: 'seo',
+        action: 'เพิ่ม title ให้ยาว 25-70 ตัวอักษร',
+        reason: `ปัจจุบัน ${title.length} ตัวอักษร — YouTube ชอบ title ที่มี keyword ครบ`,
+        impact: 'เพิ่มโอกาสโผล่ search และ recommended',
+        auto: true,
+        suggestion: `เช่น "${title.substring(0, 30)} — [topic keyword] | [channel name]"`
+      });
+    }
+    
+    if (!title.includes('?') && !title.includes('วิธี') && !title.includes('how') && categoryId !== 24) {
+      actions.push({
+        priority: 3,
+        category: 'seo',
+        action: 'เพิ่มคำถามหรือ hook ใน title',
+        reason: 'Title แบบคำถามหรือแฉลับดึงดูด click มากกว่า',
+        impact: 'เพิ่ม CTR (click-through rate)',
+        auto: false,
+        suggestion: 'เช่น "ทำไม...?" "จริงไหม?" "วิธี...ใน 3 นาที"'
+      });
+    }
+    
+    // 3. Category optimization
+    if (categoryId === 22 && opportunity.revenue >= 60) {
+      actions.push({
+        priority: 2,
+        category: 'seo',
+        action: 'เลือก category ที่เฉพาะเจาะจงกว่า People & Blogs',
+        reason: `คลิปนี้มีโอกาสรายได้สูง (${revenue.quickEstimate}) แต่ category ยังกว้าง`,
+        impact: `หมวด Tech/Education มี RPM สูงกว่า ($${CATEGORY_RPM[28]?.avg || 6.8} vs $${CATEGORY_RPM[22]?.avg || 0.9})`,
+        auto: false,
+        suggestion: 'ลอง Howto & Style, Education, หรือ Science & Technology'
+      });
+    }
+    
+    // 4. Watch Time optimization
+    if (tiktokData.duration > 0 && tiktokData.duration < 30) {
+      actions.push({
+        priority: 3,
+        category: 'content',
+        action: 'พิจารณาข้ามคลิปสั้นมาก (<30s)',
+        reason: `ความยาว ${tiktokData.duration}s — YouTube ชอบคลิป 60s+ สำหรับ mid-roll ads`,
+        impact: 'คลิปสั้นมากมีโอกาสรายได้น้อยและไม่เข้า watch hours',
+        auto: false
+      });
+    }
+    
+    // 5. Publishing strategy
+    if (virality.score >= 75) {
+      const primeTime = this.getOptimalPublishTime();
+      const primeHour = new Date(primeTime).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' });
+      actions.push({
+        priority: 2,
+        category: 'timing',
+        action: `ตั้งเวลา publish ช่วง prime time (${primeHour} น.)`,
+        reason: `Virality score ${virality.score} — คลิปแรงควร publish ช่วง peak traffic`,
+        impact: 'เพิ่มโอกาสโผล่ recommended feed และ viral',
+        auto: true
+      });
+    }
+    
+    // 6. Subscriber growth (early stage)
+    if (options.channelStage === 'early_stage' && opportunity.follower >= 70) {
+      actions.push({
+        priority: 2,
+        category: 'growth',
+        action: 'เพิ่ม CTA ใน description และคำพูดท้ายคลิป',
+        reason: `คลิปนี้มีโอกาสเพิ่ม subscriber สูง (score ${opportunity.follower})`,
+        impact: 'แปลง viewer เป็น subscriber ได้มากขึ้น',
+        auto: true,
+        suggestion: '"👍 กด Subscribe เพื่อดูคลิปแบบนี้ทุกวัน — ฟรี!"'
+      });
+    }
+    
+    // 7. Revenue estimate highlight
+    if (revenue.estimatedRpm >= 3.0 && opportunity.revenue >= 60) {
+      actions.push({
+        priority: 2,
+        category: 'revenue',
+        action: `คลิปนี้มีโอกาส RPM สูง (${revenue.quickEstimate})`,
+        reason: `หมวด ${revenue.category} + intent ${revenue.primaryIntent || 'ทั่วไป'}`,
+        impact: `ถ้าได้ 10K views ≈ $${revenue.estimatedRevenue10K.toFixed(2)} revenue`,
+        auto: false
+      });
+    }
+    
+    // 8. Duplicate check
+    if (tiktokData.alreadyUploaded) {
+      actions.unshift({
+        priority: 1,
+        category: 'policy',
+        action: 'ข้ามคลิปนี้ — เคยอัปแล้ว',
+        reason: 'Duplicate content เสีย quota โดยใช่เหตุ',
+        impact: 'ประหยัด quota สำหรับคลิปใหม่',
+        auto: false
+      });
+    }
+    
+    // Sort by priority
+    actions.sort((a, b) => a.priority - b.priority);
+    
+    return {
+      actions,
+      canProceed: validation.status !== 'blocked' && !tiktokData.alreadyUploaded,
+      quickSummary: this._quickSummary(actions, opportunity, revenue),
+      estimatedValue: {
+        rpm: revenue.estimatedRpm,
+        per10KViews: revenue.estimatedRevenue10K,
+        opportunityScore: opportunity.score
+      }
+    };
+  }
+
+  _quickSummary(actions, opportunity, revenue) {
+    const critical = actions.filter(a => a.priority === 1);
+    if (critical.length > 0) {
+      return `⚠️ ${critical[0].action}`;
+    }
+    if (opportunity.score >= 82) {
+      return `💰 คลิปพรีเมียม — ${revenue.quickEstimate}, score ${opportunity.score}`;
+    }
+    if (opportunity.score >= 68) {
+      return `📈 ดีสำหรับโตช่อง — score ${opportunity.score}`;
+    }
+    if (opportunity.score >= 52) {
+      return `👍 ใช้ทดสอบได้ — score ${opportunity.score}`;
+    }
+    return `📊 ยังไม่คุ้ม quota — score ${opportunity.score}`;
+  }
+
+  /**
    * Score business opportunity before uploading.
    * รองรับ channelStage: 'early_stage' | 'pre_ypp' | 'monetized'
    * - early_stage: เน้น follower + watch time (ยังไม่ผ่าน YPP)
@@ -496,6 +777,10 @@ class SEOService {
       : 'skip';
 
     const primaryIntent = matchedIntents[0] || null;
+    
+    // ★ Revenue estimation
+    const revenueEstimate = this.estimateRevenue(tiktokData, { categoryId, channelStage });
+    
     return {
       score,
       tier,
@@ -509,7 +794,12 @@ class SEOService {
       angle: primaryIntent ? primaryIntent.angle : this._defaultOpportunityAngle(categoryId, virality, channelStage, tiktokData),
       reasons: reasons.slice(0, 4),
       warnings: warnings.slice(0, 3),
-      recommendedAction: this._opportunityRecommendation(score, validation, channelStage)
+      recommendedAction: this._opportunityRecommendation(score, validation, channelStage),
+      // ★ Revenue fields
+      estimatedRpm: revenueEstimate.estimatedRpm,
+      estimatedRevenue10K: revenueEstimate.estimatedRevenue10K,
+      rpmCategory: revenueEstimate.category,
+      rpmQuickEstimate: revenueEstimate.quickEstimate
     };
   }
 

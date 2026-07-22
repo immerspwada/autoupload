@@ -2387,6 +2387,16 @@ kbd {
 .insight-card.success { background: var(--success-bg); border-color: rgba(22, 163, 74, 0.16); }
 .insight-card.warning { background: var(--warning-bg); border-color: rgba(181, 71, 8, 0.16); }
 .insight-card.danger { background: var(--error-bg); border-color: rgba(220, 38, 38, 0.14); }
+.insight-card.highlight { background: rgba(249, 115, 22, 0.08); border-color: rgba(249, 115, 22, 0.18); }
+
+/* ★ RPM pill — gold/money highlight */
+.rpm-pill {
+  background: linear-gradient(135deg, #fef3c7, #fde68a) !important;
+  color: #92400e !important;
+  border: 1px solid #fbbf24 !important;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(251, 191, 36, 0.25);
+}
 
 .insight-value {
   color: var(--text-primary);
@@ -4251,3 +4261,275 @@ kbd {
   .uh-video-item { grid-template-columns: 1fr; }
   .uh-thumb { width: 100%; height: 160px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   TIKTOK PAGE v2 — Cleaner, More Professional Design
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Smart Panel hero */
+.tiktok-smart-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px;
+  background: linear-gradient(135deg, rgba(254,44,85,0.04), rgba(254,44,85,0.01));
+  border: 1px solid rgba(254,44,85,0.12);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+.smart-panel-left h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.smart-panel-kicker {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tiktok);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+/* Tab navigation */
+.tiktok-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  margin-bottom: 16px;
+}
+.tiktok-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.tiktok-tab:hover { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+.tiktok-tab.active {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  font-weight: 600;
+}
+.tab-icon { font-size: 0.9rem; }
+
+/* Insights grid */
+.insights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.tiktok-insights .insight-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 6px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.tiktok-insights .insight-card.success { border-color: rgba(16,185,129,0.3); }
+.tiktok-insights .insight-card.highlight { border-color: rgba(59,130,246,0.3); }
+.tiktok-insights .insight-card.danger { border-color: rgba(239,68,68,0.2); }
+.insight-value { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
+.insight-label { font-size: 0.68rem; color: var(--text-muted); margin-top: 2px; }
+.insight-recommendation {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  margin-top: 6px;
+}
+
+/* Video Card — redesigned */
+.tiktok-video-item {
+  display: grid;
+  grid-template-columns: 28px 56px 1fr auto;
+  align-items: start;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.tiktok-video-item:hover {
+  border-color: var(--tiktok);
+  background: var(--bg-card-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.tiktok-video-item.uploaded { opacity: 0.55; }
+.tiktok-video-item.blocked { opacity: 0.4; border-left: 3px solid rgba(239,68,68,0.5); }
+
+/* Thumbnail */
+.tiktok-thumb {
+  position: relative;
+  width: 56px;
+  height: 72px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+}
+.tiktok-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.thumb-duration {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  font-size: 0.62rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+/* Score ring */
+.video-top-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.score-ring {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2.5px solid var(--ring-color, #6b7280);
+  flex-shrink: 0;
+}
+.score-ring span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Pills (inline tags) */
+.video-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 0.65rem;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.pill-revenue { border-color: rgba(16,185,129,0.25); color: #10b981; }
+.pill-wt { border-color: rgba(59,130,246,0.25); color: #60a5fa; }
+.pill-rpm { border-color: rgba(245,158,11,0.3); color: #f59e0b; font-weight: 600; }
+.pill-intent { border-color: rgba(168,85,247,0.25); color: #a855f7; }
+.pill-ok { border-color: rgba(16,185,129,0.3); color: #10b981; }
+.pill-warn { border-color: rgba(245,158,11,0.3); }
+.pill-block { border-color: rgba(239,68,68,0.3); color: #ef4444; }
+.pill-done { border-color: rgba(16,185,129,0.3); color: #10b981; }
+
+/* Title */
+.tiktok-video-title {
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+.tiktok-video-title a {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  text-decoration: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tiktok-video-title a:hover { color: var(--tiktok); }
+
+/* Meta row */
+.tiktok-video-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.meta-author { font-weight: 500; color: var(--text-secondary); }
+.meta-engagement { color: var(--tiktok); font-weight: 500; }
+
+/* Angle/recommendation text */
+.video-angle {
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Actions column */
+.tiktok-video-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  align-self: center;
+}
+.tiktok-video-actions .btn { font-size: 0.72rem; padding: 5px 10px; min-width: 56px; text-align: center; }
+
+/* Video list container */
+.tiktok-video-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 620px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.tiktok-video-list::-webkit-scrollbar { width: 4px; }
+.tiktok-video-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* Keyword chips (preset) */
+.smart-preset-chip {
+  padding: 6px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.smart-preset-chip:hover {
+  border-color: var(--tiktok);
+  color: var(--tiktok);
+  background: rgba(254,44,85,0.05);
+}
+
+/* URL insight box */
+.url-insight {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.url-insight.success { border-color: rgba(16,185,129,0.3); color: #10b981; }
+.url-insight.warning { border-color: rgba(245,158,11,0.3); color: #f59e0b; }

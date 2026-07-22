@@ -116,6 +116,16 @@ module.exports = {
     SHARE_RATE_CEILING:   0.03,
   },
 
+  // ── Video Transform (anti-reused-content) ─────────────────────────
+  VIDEO_TRANSFORM: {
+    // Max processing time before timeout (3 minutes)
+    PROCESS_TIMEOUT_MS: parseInt(process.env.VT_TIMEOUT) || 3 * 60 * 1000,
+    // Max file size to transform (500MB)
+    MAX_INPUT_SIZE_BYTES: parseInt(process.env.VT_MAX_SIZE) || 500 * 1024 * 1024,
+    // Cleanup transformed files older than this (2 hours)
+    TEMP_MAX_AGE_MS: parseInt(process.env.VT_TEMP_AGE) || 2 * 60 * 60 * 1000,
+  },
+
   // ── API Routes ────────────────────────────────────────────────────
   API: {
     // Route timeouts

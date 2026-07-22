@@ -128,6 +128,12 @@ function handleWS({ type, data }) {
     case 'queue:done':
       showToast('คิวเสร็จสิ้น', 'success');
       break;
+    case 'watchlist:progress':
+      // ★ Forward watchlist progress to TikTok page (regardless of who triggered the run)
+      if (currentPage && (location.hash === '#/tiktok')) {
+        if (currentPage.onWatchlistProgress) currentPage.onWatchlistProgress(data);
+      }
+      break;
     case 'dashboard:refresh':
       if (currentPage && location.hash === '#/' || location.hash === '#/dashboard') {
         if (currentPage.init) currentPage.init();

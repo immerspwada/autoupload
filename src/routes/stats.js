@@ -5,9 +5,9 @@ const { stats, uploads, settings } = require('../utils/store');
 const logger = require('../utils/logger');
 const uploadQueue = require('../services/queue');
 const scheduler = require('../services/scheduler');
-const quotaManager = require('../services/quota');
 const youtubeService = require('../services/youtube');
 const quotaRotator = require('../services/quotaRotator');
+const { formatBytes } = require('../utils/format');
 
 // Dashboard overview
 router.get('/dashboard', (req, res) => {
@@ -101,13 +101,5 @@ router.post('/quota/rotate', (req, res) => {
   const result = quotaRotator.rotateIfNeeded(1600);
   res.json(result);
 });
-
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
 
 module.exports = router;

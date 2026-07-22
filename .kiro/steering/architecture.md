@@ -26,6 +26,7 @@
 
 ระบบ YouTube Auto Uploader เป็น Node.js Express app ที่ทำงาน:
 - 🎵 **ดาวน์โหลด TikTok** แล้วอัปไป YouTube (no watermark) — **ฟีเจอร์หลัก**
+- 🎬 **Video Transform** — แปลงวิดีโอก่อนอัป (ป้องกัน Reused Content demonetize)
 - 💎 **SEO Auto-Optimization** — title/description/tags/category/schedule อัตโนมัติ
 - 🛡️ **Monetization Safety Check** — บล็อกเนื้อหาเสี่ยงก่อนอัปโหลด
 - 🔥 **Virality Scoring** — เลือกคลิปที่มีโอกาสไวรัลสูงอัปก่อน
@@ -47,13 +48,16 @@ src/
 │   ├── scheduler.js         — Auto-scan folder + watcher
 │   ├── youtube.js           — OAuth + YouTube upload
 │   ├── tiktok.js            — TikTok search + download (no watermark)
+│   ├── videoTransform.js    — ★ Video Transform (ffmpeg) — anti-reused-content
+│   ├── seo.js               — SEO metadata generation + monetization check
 │   └── health.js            — System monitoring + duplicate detection + cleanup
 ├── routes/
 │   ├── auth.js              — OAuth routes
 │   ├── files.js             — File listing + settings + history
 │   ├── upload.js            — Upload routes (single/all/drop)
 │   ├── stats.js             — Dashboard + scheduler config
-│   ├── tiktok.js            — TikTok search/download/batch
+│   ├── tiktok.js            — TikTok search/download/batch/compile
+│   ├── transform.js         — Video transform API (config/preview/single/compile)
 │   └── health.js            — Health check + cleanup + logs
 ├── middleware/
 │   ├── errorHandler.js      — Global error + 404
@@ -65,8 +69,13 @@ public/
 ├── index.html               — SPA with tabs
 ├── app.js                   — Frontend logic + WebSocket
 └── style.css                — Dark theme CSS with variables
+assets/                      — Video transform assets (intro/outro files)
+downloads/
+├── tiktok/                  — Downloaded TikTok files (temp)
+├── transformed/             — Transformed video output (temp)
+└── temp/                    — Processing temp files
 data/
-├── settings.json            — User settings
+├── settings.json            — User settings (includes videoTransform config)
 ├── uploads.json             — Upload history
 ├── stats.json               — Analytics data
 ├── scheduler.json           — Scheduler config

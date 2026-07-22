@@ -195,9 +195,15 @@ class Scheduler {
     schedulerStore.save({ ...schedulerStore.load(), lastRun: new Date().toISOString() });
     logger.info('Scheduler scan complete', { scanned: files.length, queued });
 
+    // ★ Fire continuous loop AFTER watchlist finishes (await instead of fire-and-forget)
+    //   ป้องกัน race: loop เริ่มใหม่ก่อน watchlist รอบก่อนจะเสร็จ
     this.runWatchlist()
       .then(() => this._startContinuousLoop())
-      .catch(err => logger.error('Watchlist run error', { error: err.message }));
+      .catch(err => {
+        logger.error('Watchlist run error', { error: err.message });
+        // Still start the continuous loop even if watchlist fails
+        this._startContinuousLoop().catch(() => {});
+      });
 
     return { scanned: files.length, queued };
   }
@@ -338,16 +344,22 @@ class Scheduler {
 
         await this._waitForQueueEmpty();
 
-        if (!this._checkQuotaBeforeScan()) break;
+        // ★ Double-check quota AFTER queue empties — ป้องกัน spin ถ้า quota หมดระหว่าง queue process
+        if (!this._checkQuotaBeforeScan()) {
+          logger.info('[Loop] Quota หมดหลัง queue ว่าง — หยุดรอ reset');
+          break;
+        }
 
         logger.info('[Loop] Running next watchlist cycle...');
         const result = await this.runWatchlist();
 
         if (result.queued === 0) {
-          // อ่าน cooldown จาก constants (ย้ายออกจาก hard-code แล้ว)
           const cooldownMs = C.SCHEDULER.LOOP_COOLDOWN_MS;
           logger.info(`[Loop] ไม่มีคลิปใหม่ — รอ ${cooldownMs / 60_000} นาทีแล้วลองใหม่`);
           await this._delay(cooldownMs);
+        } else {
+          // ★ Small delay between cycles ป้องกัน rapid fire ถ้า watchlist ผลลัพธ์เร็วมาก
+          await this._delay(5000);
         }
       }
     } finally {

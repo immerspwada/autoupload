@@ -3,29 +3,38 @@ export function render() {
   const recentKeywords = getRecentKeywords();
   return `
     <div class="tiktok-section">
+      <!-- Hero Panel -->
       <div class="tiktok-smart-panel">
-        <div>
-          <div class="smart-panel-kicker">Smart discovery</div>
-          <h3>หา TikTok ที่สร้างรายได้ ผู้ติดตาม และ SEO ได้จริง</h3>
-          <p class="section-desc">ระบบจะให้คะแนนโอกาสจากรายได้โฆษณา, โอกาสเพิ่มผู้ติดตาม, search intent, engagement, duplicate และความเสี่ยง monetization</p>
+        <div class="smart-panel-left">
+          <div class="smart-panel-kicker">Smart Discovery</div>
+          <h3>หาคลิป TikTok ที่สร้างรายได้จริง</h3>
+          <p class="section-desc">AI ให้คะแนนโอกาสจากรายได้, SEO, engagement + ป้องกัน demonetize อัตโนมัติ</p>
         </div>
         <div class="smart-presets" id="smart-presets">
           ${renderKeywordChips(recentKeywords)}
         </div>
       </div>
 
+      <!-- Tab Navigation -->
       <div class="tiktok-tabs">
-        <button class="tiktok-tab active" data-mode="search">ค้นหา</button>
-        <button class="tiktok-tab" data-mode="trending">Trending</button>
-        <button class="tiktok-tab" data-mode="creator">Creator</button>
-        <button class="tiktok-tab" data-mode="watchlist">Watchlist ⚡</button>
+        <button class="tiktok-tab active" data-mode="search">
+          <span class="tab-icon">🔍</span> ค้นหา
+        </button>
+        <button class="tiktok-tab" data-mode="trending">
+          <span class="tab-icon">🔥</span> Trending
+        </button>
+        <button class="tiktok-tab" data-mode="creator">
+          <span class="tab-icon">👤</span> Creator
+        </button>
+        <button class="tiktok-tab" data-mode="watchlist">
+          <span class="tab-icon">⚡</span> Watchlist
+        </button>
       </div>
 
+      <!-- Search Mode -->
       <div class="tiktok-mode" id="mode-search">
-        <h3>TikTok to YouTube</h3>
-        <p class="section-desc">ค้นหา → ดาวน์โหลดไม่มีลายน้ำ → อัปโหลดไป YouTube อัตโนมัติ</p>
         <div class="search-box">
-          <input type="text" id="tiktok-keyword" placeholder="ค้นหาได้หลายคำ คั่นด้วยคอมม่า เช่น: แมวน่ารัก, cooking tips, เต้น" class="search-input">
+          <input type="text" id="tiktok-keyword" placeholder="ค้นหาหลายคำ คั่นด้วยคอมม่า เช่น: แมวน่ารัก, cooking tips" class="search-input">
           <select id="tiktok-count" class="sort-select smart-count-select" title="จำนวนผลลัพธ์ต่อคำค้น">
             <option value="8">8/คำ</option>
             <option value="12" selected>12/คำ</option>
@@ -33,61 +42,55 @@ export function render() {
           </select>
           <button id="btn-tiktok-search" class="btn btn-primary">ค้นหา</button>
         </div>
-        <small class="section-desc" style="margin:6px 0 0;">ใส่หลายคีย์เวิร์ดคั่นด้วยคอมม่า (,) เพื่อค้นหาทีเดียวหลายคำ ได้ปริมาณคลิปมากขึ้น (สูงสุด 15 คำ)</small>
+
         <div class="tiktok-url-box">
-          <p class="divider-text">หรือวาง URL TikTok โดยตรง</p>
+          <p class="divider-text">— หรือวาง URL โดยตรง —</p>
           <div class="url-input-row">
             <input type="text" id="tiktok-url" placeholder="https://www.tiktok.com/@user/video/..." class="search-input">
-            <button id="btn-tiktok-save" class="btn btn-save btn-sm" title="ดาวน์โหลดไฟล์ .mp4 ลงเครื่องของคุณ">Save ลงเครื่อง</button>
-            <button id="btn-tiktok-dl-up" class="btn btn-primary btn-sm">โหลดและอัป YouTube</button>
+            <button id="btn-tiktok-save" class="btn btn-save btn-sm" title="Save MP4 ลงเครื่อง">💾 Save</button>
+            <button id="btn-tiktok-dl-up" class="btn btn-primary btn-sm">⚡ อัป YouTube</button>
           </div>
           <div id="tiktok-url-insight" class="url-insight" style="display:none;"></div>
-          <small class="section-desc" style="margin:4px 0 0;"><b>Save ลงเครื่อง</b> = โหลด MP4 ไม่มีลายน้ำไว้อัปเองทีหลัง &nbsp;|&nbsp; <b>โหลดและอัป</b> = อัปขึ้น YouTube ทันที</small>
         </div>
       </div>
 
+      <!-- Trending Mode -->
       <div class="tiktok-mode" id="mode-trending" style="display:none;">
-        <h3>คลิป Trending ตอนนี้</h3>
-        <p class="section-desc">ค้นพบคลิปมาแรงโดยไม่ต้องใส่คีย์เวิร์ด — algorithm pick สำหรับคุณ</p>
         <div class="search-box">
-          <select id="trending-region" class="search-input" style="max-width: 200px;">
-            <option value="TH">ไทย</option>
-            <option value="US">สหรัฐ</option>
-            <option value="JP">ญี่ปุ่น</option>
-            <option value="ID">อินโดนีเซีย</option>
-            <option value="VN">เวียดนาม</option>
+          <select id="trending-region" class="search-input" style="max-width: 180px;">
+            <option value="TH">🇹🇭 ไทย</option>
+            <option value="US">🇺🇸 สหรัฐ</option>
+            <option value="JP">🇯🇵 ญี่ปุ่น</option>
+            <option value="ID">🇮🇩 อินโดนีเซีย</option>
+            <option value="VN">🇻🇳 เวียดนาม</option>
           </select>
-          <button id="btn-trending" class="btn btn-primary">ดึงคลิป Trending</button>
+          <button id="btn-trending" class="btn btn-primary">ดึง Trending</button>
         </div>
       </div>
 
+      <!-- Creator Mode -->
       <div class="tiktok-mode" id="mode-creator" style="display:none;">
-        <h3>ติดตามครีเอเตอร์</h3>
-        <p class="section-desc">ดึงคลิปล่าสุดจากครีเอเตอร์ที่เลือก — เหมาะสำหรับ track ช่องที่ทำคอนเทนต์ดี</p>
         <div class="search-box">
-          <input type="text" id="creator-username" placeholder="@username (เช่น @charliamelio)" class="search-input">
+          <input type="text" id="creator-username" placeholder="@username เช่น @charlidamelio" class="search-input">
           <button id="btn-creator" class="btn btn-primary">ดึงคลิป</button>
         </div>
-        <small class="section-desc" style="margin:6px 0 0;">ใส่ @ หรือไม่ก็ได้ ระบบจะปรับให้อัตโนมัติ</small>
       </div>
 
-      <!-- ══ Watchlist Mode ══════════════════════════════════════ -->
+      <!-- Watchlist Mode -->
       <div class="tiktok-mode" id="mode-watchlist" style="display:none;">
         <div class="watchlist-header">
           <div>
             <h3>Keyword Watchlist</h3>
-            <p class="section-desc">Scheduler จะค้นหาและอัปโหลดตาม keywords เหล่านี้ทุกรอบโดยอัตโนมัติ</p>
+            <p class="section-desc">Scheduler ค้นหา+อัปโหลดอัตโนมัติตาม keywords เหล่านี้</p>
           </div>
           <div class="btn-row">
-            <button class="btn btn-secondary btn-sm" id="btn-watchlist-run">รันตอนนี้</button>
-            <button class="btn btn-primary btn-sm" id="btn-watchlist-add-open">+ เพิ่ม Keyword</button>
+            <button class="btn btn-secondary btn-sm" id="btn-watchlist-run">▶ รันตอนนี้</button>
+            <button class="btn btn-primary btn-sm" id="btn-watchlist-add-open">+ เพิ่ม</button>
           </div>
         </div>
 
-        <!-- Stats bar -->
         <div id="watchlist-stats" class="watchlist-stats"></div>
 
-        <!-- Add keyword form (hidden by default) -->
         <div id="watchlist-add-form" class="watchlist-add-form" style="display:none;">
           <div class="watchlist-form-grid">
             <div class="form-group">
@@ -107,9 +110,9 @@ export function render() {
               <label>คะแนนขั้นต่ำ</label>
               <select id="wl-minscore" class="sort-select">
                 <option value="0">ทั้งหมด</option>
-                <option value="52" selected>52+ ทดสอบ</option>
-                <option value="68">68+ ดี</option>
-                <option value="82">82+ พรีเมียม</option>
+                <option value="52" selected>52+</option>
+                <option value="68">68+</option>
+                <option value="82">82+</option>
               </select>
             </div>
           </div>
@@ -119,15 +122,12 @@ export function render() {
           </div>
         </div>
 
-        <!-- Keyword list -->
         <div id="watchlist-list" class="watchlist-list">
           <p class="empty-state">กำลังโหลด...</p>
         </div>
 
-        <!-- Provider reliability stats -->
         <div id="watchlist-provider-stats" class="watchlist-provider-stats" style="display:none;"></div>
 
-        <!-- Live run status panel -->
         <div id="watchlist-run-panel" class="watchlist-run-panel" style="display:none">
           <div class="watchlist-run-header">
             <div class="watchlist-run-title">
@@ -143,6 +143,7 @@ export function render() {
         </div>
       </div>
 
+      <!-- Results Area -->
       <div id="tiktok-batch-results" class="drop-results" style="display:none;"></div>
       <div id="tiktok-progress" class="progress-container" style="display:none;">
         <div class="progress-info"><span id="tiktok-progress-text">...</span><span id="tiktok-progress-count">0/0</span></div>
@@ -150,14 +151,13 @@ export function render() {
         <p id="tiktok-progress-file" class="progress-file"></p>
       </div>
       <div id="tiktok-loading" class="loading-state" style="display:none;"><div class="spinner"></div><p>กำลังโหลด...</p></div>
+      
       <div id="tiktok-results" style="display:none;">
         <div class="tiktok-results-header">
-          <!-- แถว 1: ชื่อผลลัพธ์ + จำนวน -->
           <div class="results-title-row">
             <span class="results-title" id="tiktok-result-keyword"></span>
             <div id="tiktok-keyword-breakdown" class="keyword-breakdown"></div>
           </div>
-          <!-- แถว 2: filter + action แยกฝั่ง -->
           <div class="results-controls-row">
             <div class="results-filters">
               <label class="filter-chip">
@@ -169,28 +169,26 @@ export function render() {
                 <span>ซ่อนที่บล็อก</span>
               </label>
               <select id="sort-by" class="sort-select">
-                <option value="opportunity">มูลค่ารวม</option>
-                <option value="revenue">รายได้</option>
-                <option value="followers">ผู้ติดตาม</option>
+                <option value="opportunity">🏆 มูลค่ารวม</option>
+                <option value="revenue">💰 รายได้</option>
+                <option value="followers">👥 ผู้ติดตาม</option>
                 <option value="watchtime">⏱ Watch Time</option>
-                <option value="seo">SEO</option>
-                <option value="virality">Virality</option>
-                <option value="likes">Likes</option>
-                <option value="views">Views</option>
-                <option value="engagement">Engagement</option>
+                <option value="seo">📈 SEO</option>
+                <option value="virality">🔥 Virality</option>
+                <option value="views">👁 Views</option>
               </select>
               <select id="filter-min-score" class="sort-select">
-                <option value="0">ทุกมูลค่า</option>
-                <option value="52">52+ ทดสอบ</option>
-                <option value="68">68+ โตช่อง</option>
+                <option value="0">ทุกระดับ</option>
+                <option value="52">52+ พอใช้</option>
+                <option value="68">68+ ดี</option>
                 <option value="82">82+ พรีเมียม</option>
               </select>
             </div>
             <div class="results-actions">
-              <button id="btn-tiktok-smart-select" class="btn btn-secondary btn-sm">เลือกแนะนำ</button>
+              <button id="btn-tiktok-smart-select" class="btn btn-secondary btn-sm">🎯 แนะนำ</button>
               <button id="btn-tiktok-select-all" class="btn btn-secondary btn-sm">เลือกทั้งหมด</button>
-              <button id="btn-tiktok-batch-save" class="btn btn-save btn-sm">Save</button>
-              <button id="btn-tiktok-batch" class="btn btn-primary btn-sm">อัป YouTube</button>
+              <button id="btn-tiktok-batch-save" class="btn btn-save btn-sm">💾 Save</button>
+              <button id="btn-tiktok-batch" class="btn btn-primary btn-sm">⚡ อัป YouTube</button>
             </div>
           </div>
         </div>
@@ -214,16 +212,21 @@ let _delegationAttached = false;
 
 // Delegation handler ที่ named function เพื่อให้ removeEventListener ได้
 function _delegationHandler(e) {
-  if (e.target.id === 'btn-tiktok-select-all')   toggleAll();
-  else if (e.target.id === 'btn-tiktok-smart-select') selectRecommended();
-  else if (e.target.id === 'btn-tiktok-batch')        batchUpload();
-  else if (e.target.id === 'btn-tiktok-batch-save')   batchSaveToComputer();
+  const btn = e.target.closest('button[id]');
+  if (!btn) return;
+  if (btn.id === 'btn-tiktok-select-all')   toggleAll();
+  else if (btn.id === 'btn-tiktok-smart-select') selectRecommended();
+  else if (btn.id === 'btn-tiktok-batch')        batchUpload();
+  else if (btn.id === 'btn-tiktok-batch-save')   batchSaveToComputer();
 }
 
 export function init() {
   // Mode tabs
   document.querySelectorAll('.tiktok-tab').forEach(tab => {
-    tab.addEventListener('click', () => switchMode(tab.dataset.mode));
+    tab.addEventListener('click', (e) => {
+      const tabEl = e.currentTarget;
+      switchMode(tabEl.dataset.mode);
+    });
   });
 
   // Search panel
@@ -520,6 +523,16 @@ function getRevenueScore(v) {
   return v.opportunity?.revenue ?? Math.round(getOpportunityScore(v) * 0.7);
 }
 
+// ★ Get estimated RPM
+function getEstimatedRpm(v) {
+  return v.estimatedRpm ?? v.opportunity?.estimatedRpm ?? 0;
+}
+
+// ★ Get recommendations
+function getRecommendations(v) {
+  return v.recommendations?.actions ?? [];
+}
+
 function getFollowerScore(v) {
   return v.opportunity?.follower ?? Math.round(getOpportunityScore(v) * 0.75);
 }
@@ -549,108 +562,119 @@ function renderInsights(filtered) {
     ? Math.round(results.reduce((sum, v) => sum + getOpportunityScore(v), 0) / results.length)
     : 0;
   const premium = results.filter(v => getOpportunityScore(v) >= 82 && !v.alreadyUploaded && v.monetizationStatus !== 'blocked').length;
-  const avgSeo = results.length
-    ? Math.round(results.reduce((sum, v) => sum + getSeoScore(v), 0) / results.length)
-    : 0;
+  
+  const avgRpm = results.length
+    ? (results.reduce((sum, v) => sum + getEstimatedRpm(v), 0) / results.length).toFixed(2)
+    : '0.00';
+
   const top = filtered[0];
   const topText = top
-    ? `แนะนำอันดับ 1: ${window.app.escapeHtml((top.desc || 'Untitled').substring(0, 54))} | ${top.opportunity?.recommendedAction || 'เลือกจากคะแนนมูลค่าสูงสุด'}`
-    : 'ไม่มีคลิปที่ผ่านตัวกรองตอนนี้';
-
-  const stageLabel = results[0]?.opportunity?.stageLabel || '';
-  const avgWT = results.length
-    ? Math.round(results.reduce((sum, v) => sum + getWatchTimeScore(v), 0) / results.length)
-    : 0;
+    ? `🎯 ${window.app.escapeHtml((top.desc || 'Untitled').substring(0, 60))} — ${top.opportunity?.recommendedAction || 'คะแนนสูงสุด'}`
+    : 'ไม่มีคลิปที่ผ่านตัวกรอง';
 
   el.innerHTML = `
-    <div class="insight-card">
-      <span class="insight-value">${filtered.length}</span>
-      <span class="insight-label">แสดงผล</span>
+    <div class="insights-grid">
+      <div class="insight-card">
+        <span class="insight-value">${filtered.length}</span>
+        <span class="insight-label">แสดง</span>
+      </div>
+      <div class="insight-card success">
+        <span class="insight-value">${ready}</span>
+        <span class="insight-label">พร้อมอัป</span>
+      </div>
+      <div class="insight-card">
+        <span class="insight-value">${avgScore}</span>
+        <span class="insight-label">Value เฉลี่ย</span>
+      </div>
+      <div class="insight-card highlight">
+        <span class="insight-value">${premium}</span>
+        <span class="insight-label">⭐ พรีเมียม</span>
+      </div>
+      <div class="insight-card highlight">
+        <span class="insight-value">$${avgRpm}</span>
+        <span class="insight-label">💰 RPM</span>
+      </div>
+      <div class="insight-card ${(duplicates+blocked) > 0 ? 'danger' : ''}">
+        <span class="insight-value">${duplicates + blocked}</span>
+        <span class="insight-label">ข้าม</span>
+      </div>
     </div>
-    <div class="insight-card success">
-      <span class="insight-value">${ready}</span>
-      <span class="insight-label">พร้อมอัป</span>
-    </div>
-    <div class="insight-card">
-      <span class="insight-value">${avgScore}</span>
-      <span class="insight-label">มูลค่าเฉลี่ย</span>
-    </div>
-    <div class="insight-card success">
-      <span class="insight-value">${premium}</span>
-      <span class="insight-label">พรีเมียม</span>
-    </div>
-    <div class="insight-card" title="Watch Time potential เฉลี่ย">
-      <span class="insight-value">${avgWT}</span>
-      <span class="insight-label">⏱ Watch Time</span>
-    </div>
-    <div class="insight-card danger">
-      <span class="insight-value">${duplicates + blocked}</span>
-      <span class="insight-label">เสีย quota</span>
-    </div>
-    <div class="insight-recommendation" id="selection-summary">${stageLabel ? `<span class="stage-pill" style="margin-right:6px">${window.app.escapeHtml(stageLabel)}</span>` : ''}${topText}</div>`;
+    <div class="insight-recommendation" id="selection-summary">${topText}</div>`;
 }
 
 function renderResults(filtered = results) {
   const el = document.getElementById('tiktok-video-list');
   if (filtered.length===0) {
-    el.innerHTML='<p class="empty-state">ไม่พบวิดีโอที่ตรงตามเงื่อนไข ลองลดคะแนนขั้นต่ำหรือปิดตัวกรองบางตัว</p>';
+    el.innerHTML='<p class="empty-state">ไม่พบวิดีโอที่ตรงตามเงื่อนไข — ลดคะแนนขั้นต่ำหรือปิดตัวกรอง</p>';
     updateSelectionSummary();
     return;
   }
   
   el.innerHTML = filtered.map((v,i) => {
     const realIdx = results.indexOf(v);
-    const viralityBadge = getViralityBadge(v.virality);
-    const monetizationBadge = getMonetizationBadge(v.monetizationStatus);
     const score = getOpportunityScore(v);
     const qualityClass = getOpportunityClass(score);
     const opportunity = v.opportunity || {};
+    const engRate = (getEngagementRate(v)*100).toFixed(1);
+    const monetStatus = v.monetizationStatus;
+    const isBlocked = monetStatus === 'blocked';
+    const isUploaded = v.alreadyUploaded;
+    
+    // Score ring color
+    const ringColor = score >= 82 ? '#10b981' : score >= 68 ? '#3b82f6' : score >= 52 ? '#f59e0b' : '#6b7280';
     
     return `
-    <div class="tiktok-video-item ${v.alreadyUploaded?'uploaded':''} ${v.monetizationStatus==='blocked'?'blocked':''}" data-idx="${realIdx}">
-      <div class="tiktok-select"><input type="checkbox" class="tiktok-cb" data-idx="${realIdx}" ${v.monetizationStatus==='blocked'?'disabled':''}></div>
+    <div class="tiktok-video-item ${isUploaded?'uploaded':''} ${isBlocked?'blocked':''}" data-idx="${realIdx}">
+      <div class="tiktok-select">
+        <input type="checkbox" class="tiktok-cb" data-idx="${realIdx}" ${isBlocked?'disabled':''}>
+      </div>
+      
       <div class="tiktok-thumb">
-        ${v.cover?`<img src="${v.cover}" loading="lazy">`:'<div class="thumb-placeholder">🎬</div>'}
-        ${viralityBadge ? `<div class="virality-overlay">${viralityBadge}</div>` : ''}
+        ${v.cover?`<img src="${v.cover}" loading="lazy" alt="">`:'<div class="thumb-placeholder">🎬</div>'}
+        ${v.duration ? `<span class="thumb-duration">${formatDuration(v.duration)}</span>` : ''}
       </div>
+      
       <div class="tiktok-video-info">
-        <div class="quality-row">
-          <span class="quality-pill ${qualityClass}">Value ${score}</span>
-          <span class="value-mini-pill">รายได้ ${getRevenueScore(v)}</span>
-          <span class="value-mini-pill">ผู้ติดตาม ${getFollowerScore(v)}</span>
-          <span class="value-mini-pill wt-pill" title="Watch Time potential">⏱ ${getWatchTimeScore(v)}</span>
-          ${opportunity.stageLabel ? `<span class="stage-pill">${window.app.escapeHtml(opportunity.stageLabel)}</span>` : ''}
-          ${opportunity.intent ? `<span class="intent-pill">${window.app.escapeHtml(opportunity.intent)}</span>` : ''}
-          ${v.matchedKeywords?.length ? `<span class="matched-keywords">${v.matchedKeywords.map(k => window.app.escapeHtml(k)).join(', ')}</span>` : ''}
+        <div class="video-top-row">
+          <div class="score-ring" style="--ring-color:${ringColor}">
+            <span>${score}</span>
+          </div>
+          <div class="video-pills">
+            <span class="pill pill-revenue" title="Revenue potential">💰 ${getRevenueScore(v)}</span>
+            <span class="pill pill-wt" title="Watch Time">⏱ ${getWatchTimeScore(v)}</span>
+            ${v.estimatedRpm ? `<span class="pill pill-rpm" title="RPM">$${v.estimatedRpm.toFixed(1)}/1K</span>` : ''}
+            ${opportunity.intent ? `<span class="pill pill-intent">${window.app.escapeHtml(opportunity.intent)}</span>` : ''}
+            ${monetStatus === 'warning' ? '<span class="pill pill-warn">⚠️</span>' : ''}
+            ${monetStatus === 'ok' ? '<span class="pill pill-ok">✓</span>' : ''}
+            ${isBlocked ? '<span class="pill pill-block">❌ บล็อก</span>' : ''}
+            ${isUploaded ? '<span class="pill pill-done">✓ อัปแล้ว</span>' : ''}
+          </div>
         </div>
+        
         <div class="tiktok-video-title">
-          <a href="${window.app.escapeHtml(v.videoUrl)}" target="_blank" rel="noopener" class="tiktok-source-link" title="ดูต้นทางบน TikTok">${window.app.escapeHtml((v.desc||'').substring(0,100))}</a>
+          <a href="${window.app.escapeHtml(v.videoUrl)}" target="_blank" rel="noopener">${window.app.escapeHtml((v.desc||'Untitled').substring(0,90))}</a>
         </div>
-        ${v.videoUrl ? `
-        <div class="tiktok-source-url">
-          <a href="${window.app.escapeHtml(v.videoUrl)}" target="_blank" rel="noopener" class="url-text" title="${window.app.escapeHtml(v.videoUrl)}">${truncateUrl(v.videoUrl)}</a>
-          <button class="copy-url-btn" title="คัดลอก URL" onclick="event.stopPropagation();navigator.clipboard.writeText('${window.app.escapeHtml(v.videoUrl)}').then(()=>window.app.showToast('คัดลอก URL แล้ว','success'))">📋</button>
-        </div>` : ''}
-        ${opportunity.angle ? `<div class="opportunity-angle">${window.app.escapeHtml(opportunity.angle)}</div>` : ''}
+        
         <div class="tiktok-video-meta">
-          <span>@${window.app.escapeHtml(v.author)}</span>
-          <span>Likes ${fmtCount(v.likeCount)} <small class="engagement-rate">(${(getEngagementRate(v)*100).toFixed(1)}%)</small></span>
-          <span>Views ${fmtCount(v.playCount)}</span>
-          ${v.duration ? `<span>${formatDuration(v.duration)}</span>` : ''}
-          ${monetizationBadge}
-          ${v.alreadyUploaded?`<span class="badge badge-success">อัปแล้ว</span>`:''}
+          <span class="meta-author">@${window.app.escapeHtml(v.author||'unknown')}</span>
+          <span>👁 ${fmtCount(v.playCount)}</span>
+          <span>❤️ ${fmtCount(v.likeCount)}</span>
+          <span class="meta-engagement">${engRate}% eng</span>
+          ${v.shareCount ? `<span>↗ ${fmtCount(v.shareCount)}</span>` : ''}
         </div>
+        
+        ${opportunity.angle ? `<div class="video-angle">${window.app.escapeHtml(opportunity.angle)}</div>` : ''}
       </div>
+      
       <div class="tiktok-video-actions">
-        ${v.alreadyUploaded
-          ? `<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">Save</button>
-             <a href="${v.youtubeUrl}" target="_blank" class="btn btn-secondary btn-sm">ดู YouTube</a>`
-          : v.monetizationStatus === 'blocked'
-          ? `<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">Save</button>
-             <button class="btn btn-error btn-sm" disabled>บล็อก</button>`
-          : `<button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})" title="โหลดไฟล์ MP4 ลงเครื่อง">Save</button>
-             <button class="btn btn-secondary btn-sm" onclick="window.tiktokPage.seoPreview(${realIdx})">SEO Plan</button>
-             <button class="btn btn-primary btn-sm" onclick="window.tiktokPage.dlUp(${realIdx})">อัป YouTube</button>`}
+        ${isUploaded
+          ? `<a href="${v.youtubeUrl}" target="_blank" class="btn btn-secondary btn-sm">YouTube ↗</a>
+             <button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})">💾</button>`
+          : isBlocked
+          ? `<button class="btn btn-secondary btn-sm" disabled>บล็อก</button>`
+          : `<button class="btn btn-primary btn-sm" onclick="window.tiktokPage.dlUp(${realIdx})">⚡ อัป</button>
+             <button class="btn btn-secondary btn-sm" onclick="window.tiktokPage.seoPreview(${realIdx})">SEO</button>
+             <button class="btn btn-save btn-sm" onclick="window.tiktokPage.saveToComputer(${realIdx})">💾</button>`}
       </div>
     </div>`;
   }).join('');
@@ -694,8 +718,8 @@ function updateSelectionSummary() {
   const selectBtn = document.getElementById('btn-tiktok-select-all');
   const summary = document.getElementById('selection-summary');
 
-  if (saveBtn) saveBtn.textContent = selected.length ? `Save ${selected.length}` : 'Save';
-  if (uploadBtn) uploadBtn.textContent = uploadable.length ? `อัป ${uploadable.length} คลิป` : 'อัป YouTube';
+  if (saveBtn) saveBtn.textContent = selected.length ? `💾 Save ${selected.length}` : '💾 Save';
+  if (uploadBtn) uploadBtn.textContent = uploadable.length ? `⚡ อัป ${uploadable.length} คลิป` : '⚡ อัป YouTube';
 
   const selectable = Array.from(document.querySelectorAll('.tiktok-cb:not(:disabled)'));
   if (selectBtn) {
@@ -1031,19 +1055,8 @@ async function batchUpload() {
   
   if (selected.length===0) { window.app.showToast('เลือกวิดีโออย่างน้อย 1', 'error'); return; }
 
-  const preview = await previewSmartBatch(selected);
-  if (preview && preview.success) {
-    const allowed = preview.videos?.allowed || [];
-    const rejected = preview.videos?.rejected || [];
-    const top = allowed.slice(0, 5).map((v, i) => {
-      const reasons = Array.isArray(v.reasons) && v.reasons.length ? ` - ${v.reasons.slice(0, 2).join(', ')}` : '';
-      return `${i + 1}. ${(v.title || 'Untitled').slice(0, 46)} (${v.smartScore})${reasons}`;
-    }).join('\n');
-    const msg = `Smart Batch Preview\n\nเลือกได้ ${allowed.length}/${selected.length} คลิป\nตัดออก ${rejected.length} คลิป\n${preview.reason}\n\n${top ? `คลิปอันดับแรก:\n${top}\n\n` : ''}เริ่มอัปโหลดตามแผนนี้ไหม?`;
-    if (!confirm(msg)) return;
-  } else if (!confirm(`อัปโหลด ${selected.length} วิดีโอ?`)) {
-    return;
-  }
+  // Quick confirm without long preview call
+  if (!confirm(`อัปโหลด ${selected.length} วิดีโอ ไป YouTube?\n\n(ระบบจะ Smart Filter ตาม quota ให้อัตโนมัติ)`)) return;
   
   try {
     const res = await fetch('/api/tiktok/batch-upload', { 
@@ -1054,11 +1067,8 @@ async function batchUpload() {
     const d = await res.json();
     
     // Handle quota/duplicate errors
-    if (res.status === 409) {
-      window.app.showToast(d.error || 'Quota ไม่พอหรือมีวิดีโอซ้ำ', 'error');
-      if (d.quotaStatus) {
-        console.log('Quota status:', d.quotaStatus);
-      }
+    if (res.status === 409 || res.status === 429 || res.status === 401) {
+      window.app.showToast(d.error || 'ไม่สามารถอัปโหลดได้', 'error');
       return;
     }
     
@@ -1575,4 +1585,19 @@ function renderRunPanel(state) {
   }).join('');
   // Auto-scroll to bottom
   logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ★ WebSocket-driven watchlist progress handler
+// เมื่อ Scheduler เป็นคน run watchlist (ไม่ใช่ manual) frontend ก็จะเห็น progress ผ่าน WebSocket
+export function onWatchlistProgress(state) {
+  // Only render if user is on watchlist tab
+  if (currentMode === 'watchlist') {
+    renderRunPanel(state);
+    // Re-enable run button + refresh list when done
+    if (!state.running && state.phase === 'done') {
+      const btn = document.getElementById('btn-watchlist-run');
+      if (btn) { btn.disabled = false; btn.textContent = 'รันตอนนี้'; }
+      loadWatchlist();
+    }
+  }
 }

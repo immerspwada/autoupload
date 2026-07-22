@@ -7,6 +7,7 @@ const path = require('path');
 const tiktokService = require('../services/tiktok');
 const youtubeService = require('../services/youtube');
 const seoService = require('../services/seo');
+const videoTransform = require('../services/videoTransform');
 const orchestrator = require('../services/orchestrator');
 const { settings, uploads } = require('../utils/store');
 const logger = require('../utils/logger');
@@ -82,9 +83,19 @@ function enrichTikTokVideo(video) {
   const validation = seoService.validateForMonetization(video, video.desc || '');
   const config = settings.load();
   const channelStage = config.channelStage || 'early_stage'; // ★ default = early stage
+  
+  // ★ Revenue estimation
+  const revenueEstimate = seoService.estimateRevenue(video, { channelStage });
+  
   const opportunity = seoService.analyzeOpportunity(
     { ...video, virality, validation },
     { alreadyUploaded: dupCheck.duplicate, channelStage }
+  );
+  
+  // ★ Actionable recommendations
+  const recommendations = seoService.generateActionableRecommendations(
+    { ...video, virality, validation, opportunity },
+    { channelStage }
   );
 
   return {
@@ -94,7 +105,14 @@ function enrichTikTokVideo(video) {
     uploadedAt: dupCheck.duplicate ? dupCheck.record.uploaded_at : null,
     virality,
     monetizationStatus: validation.status, // 'ok' | 'warning' | 'blocked'
-    opportunity
+    opportunity,
+    // ★ Revenue fields
+    estimatedRpm: revenueEstimate.estimatedRpm,
+    estimatedRevenue10K: revenueEstimate.estimatedRevenue10K,
+    rpmCategory: revenueEstimate.category,
+    rpmQuickEstimate: revenueEstimate.quickEstimate,
+    // ★ Recommendations
+    recommendations
   };
 }
 
@@ -294,9 +312,10 @@ router.post('/download-and-upload', withTimeout(115000), async (req, res) => {
     }
   }
 
+  let downloadResult = null;
   try {
     // Step 1: Download from TikTok (no watermark)
-    const downloadResult = await tiktokService.downloadNoWatermark(videoUrl, filename);
+    downloadResult = await tiktokService.downloadNoWatermark(videoUrl, filename);
 
     // Step 2: Generate SEO-optimized metadata
     const config = settings.load();
@@ -349,9 +368,36 @@ router.post('/download-and-upload', withTimeout(115000), async (req, res) => {
       publishAt = null;
     }
 
+    // Step 2.5: ★ Video Transform — add value เพื่อหลีกเลี่ยง "Reused Content"
+    // แปลงวิดีโอก่อนอัป: เพิ่ม intro/outro, overlay, watermark, visual tweaks
+    let uploadFilepath = downloadResult.filepath;
+    let transformResult = null;
+    const transformConfig = config.videoTransform || {};
+    
+    if (transformConfig.enabled !== false) {
+      try {
+        // Override overlay text with video title for this clip
+        const transformOptions = {
+          overlay: { text: videoTitle },
+          watermark: { text: transformConfig.watermark?.text || config.channelName || '' },
+        };
+        transformResult = await videoTransform.transformSingle(downloadResult.filepath, transformOptions);
+        if (transformResult.transformed) {
+          uploadFilepath = transformResult.filepath;
+          logger.info('Video transformed successfully', {
+            mode: transformResult.mode,
+            processingTime: `${(transformResult.processingTime / 1000).toFixed(1)}s`,
+          });
+        }
+      } catch (transformErr) {
+        // Transform failure is non-fatal — upload original
+        logger.warn('Video transform failed, uploading original', { error: transformErr.message });
+      }
+    }
+
     // Step 3: Upload to YouTube with optimized metadata
     const result = await youtubeService.uploadVideo({
-      filepath: downloadResult.filepath,
+      filepath: uploadFilepath,
       title: videoTitle,
       description: videoDesc,
       tags: videoTags,
@@ -385,6 +431,10 @@ router.post('/download-and-upload', withTimeout(115000), async (req, res) => {
       if (fs.existsSync(downloadResult.filepath)) {
         fs.unlinkSync(downloadResult.filepath);
       }
+      // Also delete transformed file if different from original
+      if (transformResult?.transformed && uploadFilepath !== downloadResult.filepath && fs.existsSync(uploadFilepath)) {
+        fs.unlinkSync(uploadFilepath);
+      }
     } catch (unlinkErr) {
       logger.warn('Could not delete temp file after upload', { filepath: downloadResult.filepath, error: unlinkErr.message });
     }
@@ -402,12 +452,14 @@ router.post('/download-and-upload', withTimeout(115000), async (req, res) => {
       youtubeUrl: result.youtubeUrl,
       filename: downloadResult.filename,
       provider: downloadResult.provider,
+      transformed: transformResult?.transformed || false,
+      transformMode: transformResult?.mode || null,
       quotaRemaining: youtubeService.getUploadsRemaining()
     });
   } catch (error) {
     logger.error('TikTok download-and-upload error', { error: error.message });
     // ★ Clean up downloaded file if it exists (ป้องกัน disk leak)
-    if (typeof downloadResult !== 'undefined' && downloadResult?.filepath) {
+    if (downloadResult?.filepath) {
       try { if (fs.existsSync(downloadResult.filepath)) fs.unlinkSync(downloadResult.filepath); } catch (_) {}
     }
     orchestrator.onUploadFailed({ filename: filename || 'tiktok-video', error: error.message, source: 'tiktok' });
@@ -618,36 +670,57 @@ function _filterByQuotaStatus(videos, quotaStatus, options = {}) {
   };
 }
 
+/**
+ * ★ Adaptive Quota Policy — Percentile-based instead of fixed thresholds
+ * ปรับ minScore ตาม percentile ของ candidates ที่มี ไม่ใช่ fixed number
+ * 
+ * Logic:
+ *   - ถ้า quota >= 50% → อัปทั้งหมด
+ *   - ถ้า quota 20-50% → เลือก top 70th percentile
+ *   - ถ้า quota 5-20% → เลือก top 85th percentile  
+ *   - ถ้า quota < 5% → เลือก top 95th percentile เท่านั้น
+ */
 function _getQuotaPolicy(percentUsed, availableSlots, requestedCount) {
-  if (percentUsed >= 95 || availableSlots <= Math.max(1, Math.ceil(requestedCount * 0.2))) {
+  // Critical quota — เลือกเฉพาะคลิปที่คุ้มที่สุด
+  if (percentUsed >= 95 || availableSlots <= Math.max(1, Math.ceil(requestedCount * 0.15))) {
     return {
       level: 'critical',
-      minScore: 78,
+      minScore: 78, // ~95th percentile
+      percentile: 95,
       maxPerAuthor: 1,
-      reason: `Quota วิกฤต (${percentUsed.toFixed(0)}%) - เลือกเฉพาะคลิปที่คุ้มที่สุดและกระจาย creator`
+      reason: `Quota วิกฤต (${percentUsed.toFixed(0)}%) — เลือกเฉพาะ top 5% คลิปที่คุ้มที่สุด`
     };
   }
+  
+  // Tight quota — เลือก top 15%
   if (percentUsed >= 80 || availableSlots < requestedCount) {
     return {
       level: 'tight',
-      minScore: 62,
+      minScore: 62, // ~85th percentile
+      percentile: 85,
       maxPerAuthor: 2,
-      reason: `Quota จำกัด (${availableSlots}/${requestedCount} slots) - จัดอันดับด้วย quality, risk และ engagement`
+      reason: `Quota จำกัด (${availableSlots}/${requestedCount} slots) — เลือก top 15% คลิปคุณภาพสูง`
     };
   }
+  
+  // Caution — เลือก top 30%
   if (percentUsed >= 50) {
     return {
       level: 'caution',
-      minScore: 45,
+      minScore: 45, // ~70th percentile
+      percentile: 70,
       maxPerAuthor: 3,
-      reason: `Quota เริ่มน้อย (${percentUsed.toFixed(0)}%) - ข้ามคลิปคะแนนต่ำ`
+      reason: `Quota เริ่มน้อย (${percentUsed.toFixed(0)}%) — เลือก top 30% คลิป`
     };
   }
+  
+  // Normal — อัปทั้งหมดแต่เรียงลำดับคุณภาพ
   return {
     level: 'normal',
-    minScore: 0,
+    minScore: 0, // All candidates
+    percentile: 0,
     maxPerAuthor: Infinity,
-    reason: `Quota เพียงพอ (${availableSlots} slots) - เรียงคลิปคุณภาพสูงก่อน`
+    reason: `Quota เพียงพอ (${availableSlots} slots) — เรียงตามคุณภาพ`
   };
 }
 
@@ -913,8 +986,29 @@ async function processTikTokBatch(videos, options) {
       // Phase 3: Upload to YouTube
       tiktokProgress.phase = 'uploading';
 
+      // ★ Video Transform — add value ก่อนอัป
+      let uploadFilepath = downloadResult.filepath;
+      let batchTransformed = false;
+      const transformConfig = config.videoTransform || {};
+      if (transformConfig.enabled !== false) {
+        try {
+          tiktokProgress.phase = 'transforming';
+          const tResult = await videoTransform.transformSingle(downloadResult.filepath, {
+            overlay: { text: videoTitle },
+            watermark: { text: transformConfig.watermark?.text || config.channelName || '' },
+          });
+          if (tResult.transformed) {
+            uploadFilepath = tResult.filepath;
+            batchTransformed = true;
+          }
+        } catch (tErr) {
+          logger.warn('Batch transform failed, using original', { error: tErr.message });
+        }
+      }
+
+      tiktokProgress.phase = 'uploading';
       const result = await youtubeService.uploadVideo({
-        filepath: downloadResult.filepath,
+        filepath: uploadFilepath,
         title: videoTitle,
         description: videoDesc,
         tags: videoTags,
@@ -945,6 +1039,10 @@ async function processTikTokBatch(videos, options) {
       try {
         if (fs.existsSync(downloadResult.filepath)) {
           fs.unlinkSync(downloadResult.filepath);
+        }
+        // Also clean up transformed file if different
+        if (batchTransformed && uploadFilepath !== downloadResult.filepath && fs.existsSync(uploadFilepath)) {
+          fs.unlinkSync(uploadFilepath);
         }
       } catch (unlinkErr) {
         logger.warn('Could not delete batch temp file', { filepath: downloadResult.filepath, error: unlinkErr.message });
@@ -1100,6 +1198,122 @@ router.get('/serve/:filename', (req, res) => {
   });
 
   logger.info('Serving file to browser', { filename, size: stats.size });
+});
+
+// ★ Create compilation video from multiple TikTok downloads
+router.post('/compile', withTimeout(300000), async (req, res) => {
+  const { videoUrls, title, description, tags, privacy, uploadAfter } = req.body;
+  if (!Array.isArray(videoUrls) || videoUrls.length < 2) {
+    return res.status(400).json({ error: 'ต้องมีอย่างน้อย 2 URL สำหรับ compilation' });
+  }
+
+  if (videoUrls.length > 10) {
+    return res.status(400).json({ error: 'สูงสุด 10 คลิปต่อ 1 compilation' });
+  }
+
+  try {
+    // Step 1: Download all videos
+    const downloadResults = [];
+    for (let i = 0; i < videoUrls.length; i++) {
+      try {
+        const dl = await tiktokService.downloadNoWatermark(videoUrls[i]);
+        downloadResults.push(dl);
+      } catch (err) {
+        logger.warn(`Compilation: failed to download clip ${i+1}`, { error: err.message });
+      }
+    }
+
+    if (downloadResults.length < 2) {
+      // Cleanup
+      downloadResults.forEach(dl => { try { fs.unlinkSync(dl.filepath); } catch {} });
+      return res.status(400).json({ error: 'ดาวน์โหลดได้ไม่พอ 2 คลิป — ลองใหม่' });
+    }
+
+    // Step 2: Create compilation
+    const filepaths = downloadResults.map(dl => dl.filepath);
+    const compilationResult = await videoTransform.createCompilation(filepaths, {});
+
+    // Step 3: Cleanup original downloads
+    downloadResults.forEach(dl => { try { fs.unlinkSync(dl.filepath); } catch {} });
+
+    // Step 4: Upload if requested
+    if (uploadAfter) {
+      const authStatus = youtubeService.isAuthenticated();
+      if (!authStatus.authenticated) {
+        return res.json({
+          success: true,
+          compiled: true,
+          filepath: compilationResult.filepath,
+          clips: compilationResult.clips,
+          duration: compilationResult.videoDuration,
+          uploaded: false,
+          reason: 'ยังไม่ได้เชื่อมต่อ YouTube — compilation บันทึกไว้แล้ว'
+        });
+      }
+
+      const config = settings.load();
+      const compTitle = title || `Compilation ${new Date().toLocaleDateString('th-TH')}`;
+      const metadata = seoService.generateMetadata({ desc: compTitle, duration: compilationResult.videoDuration }, {});
+      
+      const result = await youtubeService.uploadVideo({
+        filepath: compilationResult.filepath,
+        title: compTitle,
+        description: description || metadata.description,
+        tags: tags || metadata.tags,
+        privacy: privacy || config.privacy || 'public',
+        categoryId: metadata.categoryId,
+      });
+
+      // Cleanup
+      try { fs.unlinkSync(compilationResult.filepath); } catch {}
+
+      // Record
+      await uploads.safeUpdate(arr => {
+        arr.push({
+          filename: path.basename(compilationResult.filepath),
+          youtube_id: result.videoId,
+          youtube_url: result.youtubeUrl,
+          uploaded_at: new Date().toISOString(),
+          source: 'tiktok_compilation',
+          title: compTitle,
+          clips: compilationResult.clips,
+          duration: compilationResult.videoDuration,
+          deleted: true,
+        });
+        return arr;
+      });
+
+      orchestrator.onUploadCompleted({
+        filename: path.basename(compilationResult.filepath),
+        source: 'tiktok_compilation',
+        videoId: result.videoId,
+        youtubeUrl: result.youtubeUrl
+      });
+
+      return res.json({
+        success: true,
+        compiled: true,
+        uploaded: true,
+        videoId: result.videoId,
+        youtubeUrl: result.youtubeUrl,
+        clips: compilationResult.clips,
+        duration: compilationResult.videoDuration,
+      });
+    }
+
+    res.json({
+      success: true,
+      compiled: true,
+      uploaded: false,
+      filepath: compilationResult.filepath,
+      clips: compilationResult.clips,
+      duration: compilationResult.videoDuration,
+      size: compilationResult.outputSize,
+    });
+  } catch (error) {
+    logger.error('Compilation error', { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
 });
 
 module.exports = router;
