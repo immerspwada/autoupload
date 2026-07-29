@@ -95,6 +95,36 @@ module.exports = {
     MAX_ENTRIES: parseInt(process.env.ACTIVITY_MAX_ENTRIES) || 500,
   },
 
+  // ── Autonomous Upload Engine ──────────────────────────────────────
+  ENGINE: {
+    // Supervisor tick (15s–5min) — heartbeat + decision loop
+    TICK_MS: Math.max(15_000, Math.min(300_000,
+      parseInt(process.env.ENGINE_TICK_MS) || 60_000)),
+    // ★ Live activity trail — จำนวน step ที่เก็บใน memory / ที่ persist ลงดิสก์
+    STEP_HISTORY_MAX:  parseInt(process.env.ENGINE_STEP_HISTORY)  || 200,
+    STEP_PERSIST_MAX:  parseInt(process.env.ENGINE_STEP_PERSIST)  || 50,
+    // Broadcast throttle — กัน WS spam ตอน step ถี่
+    BROADCAST_MIN_MS:  parseInt(process.env.ENGINE_BROADCAST_MIN_MS) || 1000,
+    // ★ Stuck budgets ต่อ phase (ms) — เกินนี้ = dispatch engine:stuck
+    STUCK_BUDGET_MS: {
+      discovering:   parseInt(process.env.ENGINE_STUCK_DISCOVERING) || 15 * 60_000,
+      uploading:     parseInt(process.env.ENGINE_STUCK_UPLOADING)   || 60 * 60_000,
+      idle:          parseInt(process.env.ENGINE_STUCK_IDLE)        || 10 * 60_000,
+      degraded:      parseInt(process.env.ENGINE_STUCK_DEGRADED)    || 35 * 60_000,
+      paused_health: parseInt(process.env.ENGINE_STUCK_HEALTH)      || 6 * 60 * 60_000,
+    },
+    // ★ Grace หลัง nextActionAt ของ phase ที่ "รอเวลา" (waiting_quota/waiting_pacing)
+    WAITING_GRACE_MS:  parseInt(process.env.ENGINE_WAITING_GRACE_MS) || 5 * 60_000,
+    // ห้ามแจ้ง stuck ซ้ำภายในกี่ ms ต่อ phase
+    STUCK_ALERT_COOLDOWN_MS: parseInt(process.env.ENGINE_STUCK_COOLDOWN) || 30 * 60_000,
+    // ★ Cycle hard timeout — ไม่มี progress นานเกินนี้ = watchdog บังคับปลดล็อกลูป
+    CYCLE_STALL_MS:    parseInt(process.env.ENGINE_CYCLE_STALL_MS) || 75 * 60_000,
+    // heartbeat ที่เก่ากว่านี้ (วินาที) = ถือว่าตาย
+    HEARTBEAT_DEAD_SEC: parseInt(process.env.ENGINE_HEARTBEAT_DEAD_SEC) || 180,
+    // หน่วงหลัง paused_health ก่อน probe ดิสก์ใหม่
+    HEALTH_RECHECK_MS: parseInt(process.env.ENGINE_HEALTH_RECHECK_MS) || 15 * 60_000,
+  },
+
   // ── Logger ────────────────────────────────────────────────────────
   LOGGER: {
     MAX_FILE_SIZE_BYTES: parseInt(process.env.LOG_MAX_SIZE) || 5 * 1024 * 1024,
