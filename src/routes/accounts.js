@@ -3,6 +3,7 @@
  */
 
 const express = require('express');
+const { requireAuthForDestructive } = require('../middleware/security');
 const router = express.Router();
 const accountManager = require('../utils/accounts');
 const logger = require('../utils/logger');
@@ -51,7 +52,7 @@ router.get('/', (req, res) => {
  * POST /api/accounts
  * เพิ่ม account ใหม่
  */
-router.post('/', (req, res) => {
+router.post('/', requireAuthForDestructive, (req, res) => {
   try {
     const { name, clientId, clientSecret, redirectUri } = req.body;
 
@@ -93,7 +94,7 @@ router.post('/', (req, res) => {
  * PUT /api/accounts/:id
  * อัปเดต account
  */
-router.put('/:id', (req, res) => {
+router.put('/:id', requireAuthForDestructive, (req, res) => {
   try {
     const { id } = req.params;
     const { name, clientId, clientSecret, redirectUri } = req.body;
@@ -129,7 +130,7 @@ router.put('/:id', (req, res) => {
  * DELETE /api/accounts/:id
  * ลบ account
  */
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireAuthForDestructive, (req, res) => {
   try {
     const { id } = req.params;
 
@@ -183,7 +184,7 @@ router.post('/:id/activate', (req, res) => {
  * POST /api/accounts/:id/reset-quota
  * รีเซ็ต quota
  */
-router.post('/:id/reset-quota', (req, res) => {
+router.post('/:id/reset-quota', requireAuthForDestructive, (req, res) => {
   try {
     const { id } = req.params;
 

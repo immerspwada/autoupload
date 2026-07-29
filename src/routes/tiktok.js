@@ -11,6 +11,7 @@ const videoTransform = require('../services/videoTransform');
 const orchestrator = require('../services/orchestrator');
 const { settings, uploads } = require('../utils/store');
 const logger = require('../utils/logger');
+const C = require('../config/constants');
 
 // ★ Route timeout middleware — ป้องกัน request ค้างไม่มีกำหนด
 function withTimeout(ms) {
@@ -21,11 +22,17 @@ function withTimeout(ms) {
         res.status(504).json({ error: 'Request timeout — tikwm API ใช้เวลานานเกินไป ลองใหม่อีกครั้ง' });
       }
     }, ms);
+    if (timer.unref) timer.unref();
     res.on('finish', () => clearTimeout(timer));
     res.on('close',  () => clearTimeout(timer));
     next();
   };
 }
+
+// ★ เพดานจำนวนวิดีโอต่อ 1 batch request
+const MAX_BATCH_VIDEOS = parseInt(process.env.MAX_BATCH_VIDEOS) || 100;
+// ★ เพดานจำนวน result ที่เก็บใน memory ต่อ 1 batch
+const MAX_PROGRESS_RESULTS = 200;
 
 // ==================== Duplicate Detection ====================
 
@@ -47,28 +54,65 @@ function extractTikTokVideoId(url) {
  * Check if a TikTok video has already been uploaded to YouTube
  * Checks by: source_url, tiktok_video_id, or title similarity
  */
-function isDuplicateTikTok(videoUrl, videoId) {
-  const allUploads = uploads.load();
+/**
+ * ★ Duplicate index — สร้าง Map ครั้งเดียวแล้ว lookup O(1)
+ *
+ * เดิม: isDuplicateTikTok() โหลด uploads.json + วน linear ทุกครั้งที่เช็ค 1 คลิป
+ *       batch 50 คลิป × history 3,000 record = 150,000 รอบ + regex ต่อรอบ
+ *       ทำงานแบบ synchronous → event loop ค้าง หน้าเว็บหมุนทั้งหมด
+ * ตอนนี้: index ถูก cache และ rebuild เฉพาะเมื่อ uploads.json เปลี่ยน
+ */
+let _dupIndex = null;
+let _dupIndexSize = -1;
+
+function buildDuplicateIndex() {
+  const allUploads = uploads.loadRef();
+
+  // rebuild เฉพาะเมื่อจำนวน record เปลี่ยน (append-only store)
+  if (_dupIndex && _dupIndexSize === allUploads.length) return _dupIndex;
+
+  const byUrl = new Map();
+  const byId  = new Map();
 
   for (const record of allUploads) {
-    // Check 1: Exact source URL match
-    if (record.source_url && record.source_url === videoUrl) {
-      return { duplicate: true, reason: 'exact_url', record };
-    }
-
-    // Check 2: TikTok video ID match (from source_url in history)
-    if (record.source_url && videoId) {
+    if (record.source_url) {
+      if (!byUrl.has(record.source_url)) byUrl.set(record.source_url, record);
       const existingId = extractTikTokVideoId(record.source_url);
-      if (existingId && existingId === videoId) {
-        return { duplicate: true, reason: 'video_id', record };
-      }
+      if (existingId && !byId.has(existingId)) byId.set(existingId, record);
     }
-
-    // Check 3: tiktok_video_id field match
-    if (record.tiktok_video_id && record.tiktok_video_id === videoId) {
-      return { duplicate: true, reason: 'stored_id', record };
+    if (record.tiktok_video_id && !byId.has(record.tiktok_video_id)) {
+      byId.set(record.tiktok_video_id, record);
     }
   }
+
+  _dupIndex = { byUrl, byId };
+  _dupIndexSize = allUploads.length;
+  return _dupIndex;
+}
+
+/** บังคับสร้าง index ใหม่ — เรียกหลังอัปโหลดสำเร็จ */
+function invalidateDuplicateIndex() {
+  _dupIndex = null;
+  _dupIndexSize = -1;
+}
+
+/**
+ * ★ บันทึก record การอัปโหลด + ล้าง duplicate index ในคำสั่งเดียว
+ * ป้องกันกรณีลืมล้าง index → คลิปเดิมถูกอัปซ้ำเพราะ index ยังเป็นของเก่า
+ */
+async function recordUpload(updater) {
+  await uploads.safeUpdate(updater);
+  invalidateDuplicateIndex();
+}
+
+function isDuplicateTikTok(videoUrl, videoId) {
+  const { byUrl, byId } = buildDuplicateIndex();
+
+  const byUrlHit = videoUrl ? byUrl.get(videoUrl) : null;
+  if (byUrlHit) return { duplicate: true, reason: 'exact_url', record: byUrlHit };
+
+  const byIdHit = videoId ? byId.get(videoId) : null;
+  if (byIdHit) return { duplicate: true, reason: 'video_id', record: byIdHit };
 
   return { duplicate: false };
 }
@@ -81,7 +125,8 @@ function enrichTikTokVideo(video) {
   const dupCheck = isDuplicateTikTok(video.videoUrl, videoId);
   const virality = seoService.calculateViralityScore(video);
   const validation = seoService.validateForMonetization(video, video.desc || '');
-  const config = settings.load();
+  // ★ loadRef — ไม่ clone settings ทุกคลิป (ถูกเรียกทุกรายการในผลค้นหา)
+  const config = settings.loadRef();
   const channelStage = config.channelStage || 'early_stage'; // ★ default = early stage
   
   // ★ Revenue estimation
@@ -119,7 +164,7 @@ function enrichTikTokVideo(video) {
 // Search TikTok videos by keyword (single or multiple)
 // Accepts either { keyword: "cat" } or { keywords: ["cat", "dog", "..."] }
 // Multiple keywords can also be sent as one comma/newline-separated string in `keyword`.
-router.post('/search', withTimeout(32000), async (req, res) => {
+router.post('/search', withTimeout(C.API.TIKTOK_SEARCH_TIMEOUT_MS), async (req, res) => {
   const { keyword, keywords, count } = req.body;
 
   // Normalize input into a list of keywords
@@ -131,19 +176,26 @@ router.post('/search', withTimeout(32000), async (req, res) => {
   } else if (typeof keyword === 'string') {
     keywordList = keyword.split(/[,\n]/);
   }
-  keywordList = keywordList.map(k => k.trim()).filter(Boolean);
+  // ★ กรอง keyword ที่ยาวผิดปกติออก (กัน URL ยาวๆ ถูกส่งมาเป็น keyword)
+  keywordList = keywordList
+    .map(k => (typeof k === 'string' ? k.trim() : ''))
+    .filter(k => k.length > 0 && k.length <= 100);
 
   if (keywordList.length === 0) {
-    return res.status(400).json({ error: 'กรุณาระบุคีย์เวิร์ดอย่างน้อย 1 คำ' });
+    return res.status(400).json({ error: 'กรุณาระบุคีย์เวิร์ดอย่างน้อย 1 คำ (ยาวไม่เกิน 100 ตัวอักษร)' });
   }
 
   // Cap to avoid abuse / excessive upstream load
-  const MAX_KEYWORDS = 15;
-  if (keywordList.length > MAX_KEYWORDS) {
-    keywordList = keywordList.slice(0, MAX_KEYWORDS);
+  if (keywordList.length > C.API.MAX_KEYWORDS_PER_SEARCH) {
+    keywordList = keywordList.slice(0, C.API.MAX_KEYWORDS_PER_SEARCH);
   }
 
-  const countPerKeyword = count || 12;
+  // ★ clamp count — เดิมรับค่าอะไรก็ได้แล้วยัดลง URL ของ tikwm ตรงๆ
+  //   count=100000 ทำให้ upstream ตอบก้อนใหญ่มากแล้ว enrich ทุกรายการ = event loop ตาย
+  const parsedCount = parseInt(count, 10);
+  const countPerKeyword = Number.isFinite(parsedCount)
+    ? Math.min(Math.max(parsedCount, 1), 50)
+    : 12;
 
   try {
     let videos, perKeyword;
@@ -182,7 +234,7 @@ router.post('/search', withTimeout(32000), async (req, res) => {
 });
 
 // Discover trending videos WITHOUT a keyword (browse what's hot right now)
-router.get('/trending', withTimeout(18000), async (req, res) => {
+router.get('/trending', withTimeout(C.API.TIKTOK_TRENDING_TIMEOUT_MS), async (req, res) => {
   const region = req.query.region || 'TH';
   const count = parseInt(req.query.count) || 12;
 
@@ -201,7 +253,7 @@ router.get('/trending', withTimeout(18000), async (req, res) => {
 
 // Fetch latest videos from a specific creator (@username) — track creators
 // whose content performs well and grab their newest clips.
-router.get('/creator/:username', withTimeout(22000), async (req, res) => {
+router.get('/creator/:username', withTimeout(C.API.TIKTOK_CREATOR_TIMEOUT_MS), async (req, res) => {
   const { username } = req.params;
   const count = parseInt(req.query.count) || 12;
 
@@ -261,7 +313,7 @@ router.post('/download', async (req, res) => {
 });
 
 // Download and immediately upload to YouTube
-router.post('/download-and-upload', withTimeout(115000), async (req, res) => {
+router.post('/download-and-upload', withTimeout(C.API.TIKTOK_DL_UP_TIMEOUT_MS), async (req, res) => {
   const { videoUrl, title, description, tags, privacy, filename, force } = req.body;
   if (!videoUrl) return res.status(400).json({ error: 'กรุณาระบุ URL ของวิดีโอ' });
 
@@ -409,7 +461,7 @@ router.post('/download-and-upload', withTimeout(115000), async (req, res) => {
     // ★ Atomic / race-safe record write — safeUpdate serializes concurrent saves
     const tiktokVideoId      = extractTikTokVideoId(videoUrl);
     const viralityForHistory = req.body.viralityScore ?? req.body.virality?.score ?? null;
-    await uploads.safeUpdate(arr => {
+    await recordUpload(arr => {
       arr.push({
         filename:        downloadResult.filename,
         filepath:        downloadResult.filepath,
@@ -472,6 +524,22 @@ router.post('/batch-upload', async (req, res) => {
   const { videos, privacy, description, tags, force } = req.body;
   if (!videos || !Array.isArray(videos) || videos.length === 0) {
     return res.status(400).json({ error: 'กรุณาเลือกวิดีโออย่างน้อย 1 รายการ' });
+  }
+  // ★ เพดานจำนวน — เดิมไม่จำกัด scoring ทุกรายการเป็น synchronous = event loop ค้าง
+  if (videos.length > MAX_BATCH_VIDEOS) {
+    return res.status(400).json({
+      error: `เลือกได้สูงสุด ${MAX_BATCH_VIDEOS} คลิปต่อครั้ง (ส่งมา ${videos.length})`,
+      code: 'BATCH_TOO_LARGE',
+    });
+  }
+
+  // ★ กันยิง batch ซ้อนกัน — tiktokProgress เป็น global ตัวเดียว สองงานพร้อมกันจะทับกัน
+  if (tiktokProgress.status === 'processing') {
+    return res.status(409).json({
+      error: 'มี batch upload กำลังทำงานอยู่ — รอให้เสร็จก่อน',
+      code: 'BATCH_IN_PROGRESS',
+      progress: { current: tiktokProgress.current, total: tiktokProgress.total },
+    });
   }
 
   const authStatus = youtubeService.isAuthenticated();
@@ -549,6 +617,9 @@ router.post('/batch-upload', async (req, res) => {
 // Preview smart batch selection without downloading or uploading.
 router.post('/batch-preview', (req, res) => {
   const { videos } = req.body;
+  if (Array.isArray(videos) && videos.length > MAX_BATCH_VIDEOS) {
+    return res.status(400).json({ error: `ดูตัวอย่างได้สูงสุด ${MAX_BATCH_VIDEOS} คลิป`, code: 'BATCH_TOO_LARGE' });
+  }
   if (!videos || !Array.isArray(videos) || videos.length === 0) {
     return res.status(400).json({ error: 'กรุณาเลือกวิดีโออย่างน้อย 1 รายการ' });
   }
@@ -858,41 +929,82 @@ function _getViralityScore(video) {
   return seoService.calculateViralityScore(video).score || 0;
 }
 
+/**
+ * ★ เก็บผลลัพธ์ของ batch แบบมีเพดาน
+ * เดิม results เป็น array ที่โตได้ไม่จำกัดและถูก serialize ส่งผ่าน SSE ทุกวินาที
+ */
+function _pushResult(entry) {
+  tiktokProgress.results.push(entry);
+  if (tiktokProgress.results.length > MAX_PROGRESS_RESULTS) {
+    tiktokProgress.results.splice(0, tiktokProgress.results.length - MAX_PROGRESS_RESULTS);
+  }
+}
+
 // TikTok batch progress (SSE)
+// ★ เพดานอายุ stream — เดิมถ้า status ค้างที่ 'processing' (เช่น process ถูก kill กลางทาง)
+//   interval จะวิ่งทุกวินาทีตลอดกาลต่อ client 1 คน
+const SSE_MAX_LIFETIME_MS = 30 * 60 * 1000;
+
 router.get('/progress', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');   // กัน nginx buffer SSE
 
   let closed = false;
-  req.on('close', () => { closed = true; clearInterval(interval); });
+  const startedAt = Date.now();
+
+  const stop = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(interval);
+    try { res.end(); } catch (_) {}
+  };
+
+  req.on('close', stop);
+  req.on('error', stop);
 
   const interval = setInterval(() => {
     if (closed) return;
+
+    if (Date.now() - startedAt > SSE_MAX_LIFETIME_MS) {
+      logger.debug('[TikTok SSE] ปิด stream ที่เปิดนานเกินกำหนด');
+      return stop();
+    }
+
     try {
-      res.write(`data: ${JSON.stringify(tiktokProgress)}\n\n`);
-      if (tiktokProgress.status === 'done' || tiktokProgress.status === 'idle') {
-        clearInterval(interval);
-        res.end();
-      }
-    } catch (err) {
-      // Client disconnected before close event fired
-      clearInterval(interval);
+      // ★ ส่งแค่ที่จำเป็น — results อาจยาวมากในงาน batch ใหญ่
+      res.write(`data: ${JSON.stringify({
+        current:     tiktokProgress.current,
+        total:       tiktokProgress.total,
+        currentFile: tiktokProgress.currentFile,
+        status:      tiktokProgress.status,
+        phase:       tiktokProgress.phase,
+        results:     tiktokProgress.results.slice(-30),
+      })}\n\n`);
+
+      if (tiktokProgress.status === 'done' || tiktokProgress.status === 'idle') stop();
+    } catch (_) {
+      stop();   // Client disconnected before close event fired
     }
   }, 1000);
+  if (interval.unref) interval.unref();
 });
 
 async function processTikTokBatch(videos, options) {
-  const config      = settings.load();
+  const config      = settings.loadRef();
   const privacy     = options.privacy     || config.privacy            || 'public';
   const defaultDesc = options.description || config.defaultDescription || '';
   const defaultTags = options.tags        || config.defaultTags        || '';
   const seoMode     = config.seoMode      || 'auto';
-  const C           = require('../config/constants');
 
   videos.sort((a, b) => (b._smartScore ?? _getViralityScore(b)) - (a._smartScore ?? _getViralityScore(a)));
 
-  tiktokProgress = { current: 0, total: videos.length, currentFile: '', status: 'processing', phase: '', results: [] };
+  tiktokProgress = {
+    current: 0, total: videos.length, currentFile: '',
+    status: 'processing', phase: '', results: [],
+    startedAt: Date.now(),
+  };
 
   // ★ try/finally รับประกัน status='done' แม้ process crash กลางทาง
   try {
@@ -906,7 +1018,7 @@ async function processTikTokBatch(videos, options) {
     const quotaStatus = youtubeService.getQuotaStatus();
     if (quotaStatus.uploadsRemaining <= 0) {
       logger.warn('Quota exhausted mid-batch', { videoIndex: i, total: videos.length });
-      tiktokProgress.results.push({
+      _pushResult({
         title: video.title || `วิดีโอ ${i + 1}`,
         success: false,
         skipped: true,
@@ -921,7 +1033,7 @@ async function processTikTokBatch(videos, options) {
     const dupCheck = isDuplicateTikTok(video.videoUrl, videoId);
     if (dupCheck.duplicate) {
       logger.info(`Skipping duplicate TikTok video`, { videoUrl: video.videoUrl, youtubeUrl: dupCheck.record.youtube_url });
-      tiktokProgress.results.push({
+      _pushResult({
         title: video.title || `วิดีโอ ${i + 1}`,
         success: false,
         skipped: true,
@@ -939,7 +1051,7 @@ async function processTikTokBatch(videos, options) {
       );
       if (preCheck.status === 'blocked') {
         logger.warn('Skipping blocked TikTok video in batch', { videoUrl: video.videoUrl, issues: preCheck.issues });
-        tiktokProgress.results.push({
+        _pushResult({
           title: video.title || video.desc || `วิดีโอ ${i + 1}`,
           success: false,
           skipped: true,
@@ -1018,7 +1130,7 @@ async function processTikTokBatch(videos, options) {
 
       // ★ Atomic / race-safe record write
       const tiktokVidId = extractTikTokVideoId(video.videoUrl);
-      await uploads.safeUpdate(arr => {
+      await recordUpload(arr => {
         arr.push({
           filename:        downloadResult.filename,
           filepath:        downloadResult.filepath,
@@ -1048,7 +1160,7 @@ async function processTikTokBatch(videos, options) {
         logger.warn('Could not delete batch temp file', { filepath: downloadResult.filepath, error: unlinkErr.message });
       }
 
-      tiktokProgress.results.push({
+      _pushResult({
         title: videoTitle,
         success: true,
         youtubeUrl: result.youtubeUrl
@@ -1062,7 +1174,7 @@ async function processTikTokBatch(videos, options) {
       });
     } catch (error) {
       logger.error(`Batch error for video ${i + 1}`, { error: error.message });
-      tiktokProgress.results.push({
+      _pushResult({
         title: video.title || `วิดีโอ ${i + 1}`,
         success: false,
         error: error.message
@@ -1119,7 +1231,7 @@ router.delete('/files/:filename', (req, res) => {
  * 
  * Flow: TikTok → server downloads (no watermark) → browser download dialog
  */
-router.post('/download-to-browser', withTimeout(85000), async (req, res) => {
+router.post('/download-to-browser', withTimeout(C.API.TIKTOK_DL_BROWSER_TIMEOUT_MS), async (req, res) => {
   const { videoUrl, filename } = req.body;
   if (!videoUrl) return res.status(400).json({ error: 'กรุณาระบุ URL ของวิดีโอ' });
 
@@ -1201,7 +1313,7 @@ router.get('/serve/:filename', (req, res) => {
 });
 
 // ★ Create compilation video from multiple TikTok downloads
-router.post('/compile', withTimeout(300000), async (req, res) => {
+router.post('/compile', withTimeout(C.API.TIKTOK_COMPILE_TIMEOUT_MS), async (req, res) => {
   const { videoUrls, title, description, tags, privacy, uploadAfter } = req.body;
   if (!Array.isArray(videoUrls) || videoUrls.length < 2) {
     return res.status(400).json({ error: 'ต้องมีอย่างน้อย 2 URL สำหรับ compilation' });
@@ -1268,7 +1380,7 @@ router.post('/compile', withTimeout(300000), async (req, res) => {
       try { fs.unlinkSync(compilationResult.filepath); } catch {}
 
       // Record
-      await uploads.safeUpdate(arr => {
+      await recordUpload(arr => {
         arr.push({
           filename: path.basename(compilationResult.filepath),
           youtube_id: result.videoId,

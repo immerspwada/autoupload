@@ -27,11 +27,66 @@ function applyTheme(theme) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+//  Dashboard auth gate — แสดงหน้า login ถ้าตั้ง DASHBOARD_PASSWORD ไว้
+// ══════════════════════════════════════════════════════════════
+function renderLoginScreen(message = '') {
+  document.body.innerHTML = `
+    <div class="login-overlay">
+      <form class="login-card" id="login-form">
+        <div class="login-logo">🎬</div>
+        <h1>YouTube Auto Uploader</h1>
+        <p class="login-sub">ระบบถูกล็อกด้วยรหัสผ่าน กรุณาเข้าสู่ระบบ</p>
+        <input type="password" id="login-pw" placeholder="รหัสผ่าน" autocomplete="current-password" required autofocus>
+        <button type="submit" id="login-btn">เข้าสู่ระบบ</button>
+        <p class="login-error" id="login-error">${message}</p>
+      </form>
+    </div>`;
+
+  const form = document.getElementById('login-form');
+  const err  = document.getElementById('login-error');
+  const btn  = document.getElementById('login-btn');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    btn.disabled = true; btn.textContent = 'กำลังตรวจสอบ...';
+    err.textContent = '';
+    try {
+      const r = await fetch('/api/security/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: document.getElementById('login-pw').value }),
+      });
+      const d = await r.json();
+      if (r.ok && d.success) { location.reload(); return; }
+      err.textContent = d.error || 'เข้าสู่ระบบไม่สำเร็จ';
+    } catch (_) {
+      err.textContent = 'ติดต่อเซิร์ฟเวอร์ไม่ได้';
+    }
+    btn.disabled = false; btn.textContent = 'เข้าสู่ระบบ';
+  });
+}
+
+/** เช็คสถานะ auth ก่อนบูต SPA — คืน true ถ้าผ่าน */
+async function gateAuth() {
+  try {
+    const r = await fetch('/api/security/status');
+    const d = await r.json();
+    if (d.authEnabled && !d.authenticated) { renderLoginScreen(); return false; }
+    return true;
+  } catch (_) {
+    return true;   // ติดต่อไม่ได้ → ให้ SPA โหลดแล้วแสดง error ปกติ
+  }
+}
+
 // ==================== INIT ====================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   // Apply saved theme
   const savedTheme = localStorage.getItem('theme') || 'dark-pro';
   applyTheme(savedTheme);
+
+  // ★ ต้องผ่าน auth ก่อนถึงจะบูต SPA (ไม่งั้นทุก fetch จะเด้ง 401 หมด)
+  if (!(await gateAuth())) return;
 
   initWebSocket();
   initNav();
@@ -349,8 +404,50 @@ function timeAgo(dateStr) {
   return `${Math.floor(h/24)} วันที่แล้ว`;
 }
 
+// ══════════════════════════════════════════════════════════════
+//  ★ apiFetch — ตัวกลางเรียก API ที่จัดการ error ให้เป็นมาตรฐาน
+//  จัดการ: 401 (session หมด) / 429 (rate limit) / 507 (ดิสก์เต็ม)
+// ══════════════════════════════════════════════════════════════
+async function apiFetch(url, options = {}) {
+  const res = await fetch(url, options);
+
+  if (res.status === 401) {
+    renderLoginScreen('เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่');
+    throw new Error('ต้องเข้าสู่ระบบใหม่');
+  }
+
+  let data = null;
+  const isJson = (res.headers.get('content-type') || '').includes('application/json');
+  if (isJson) { try { data = await res.json(); } catch (_) {} }
+
+  if (!res.ok) {
+    if (res.status === 429) {
+      const sec = data?.retryAfterSeconds || res.headers.get('Retry-After') || '?';
+      showToast(`ส่งคำขอถี่เกินไป — รออีก ${sec} วินาที`, 'warning');
+    } else if (res.status === 507) {
+      showToast(`พื้นที่ดิสก์ไม่พอ — ${data?.detail || ''}`, 'error');
+    }
+    const err = new Error(data?.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.code   = data?.code;
+    err.details = data?.details;
+    throw err;
+  }
+
+  return data;
+}
+
+async function doDashboardLogout() {
+  try { await fetch('/api/security/logout', { method: 'POST' }); } catch (_) {}
+  location.reload();
+}
+
 // ==================== GLOBAL EXPORTS ====================
-window.app = { showToast, escapeHtml, formatFileSize, timeAgo, openUploadModal, login, logout: doLogout, navigate, toggleQueuePause };
+window.app = {
+  showToast, escapeHtml, formatFileSize, timeAgo, openUploadModal,
+  login, logout: doLogout, navigate, toggleQueuePause,
+  apiFetch, dashboardLogout: doDashboardLogout,
+};
 window.closeModal = closeModal;
 window.runCleanup = runCleanup;
 

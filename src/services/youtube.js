@@ -6,6 +6,8 @@ const logger = require('../utils/logger');
 const quotaManager = require('./quota');
 const accountManager = require('../utils/accounts');
 const quotaRotator = require('./quotaRotator');
+const C = require('../config/constants');
+const { guarded } = require('../utils/resilience');
 
 const TOKEN_PATH = path.join(__dirname, '../../token.json');
 const CRED_PATH = path.join(__dirname, '../../client_secret.json');
@@ -184,6 +186,7 @@ class YouTubeService {
     return client.generateAuthUrl({
       access_type: 'offline',
       scope: [
+        'https://www.googleapis.com/auth/youtube',
         'https://www.googleapis.com/auth/youtube.upload',
         'https://www.googleapis.com/auth/youtube.readonly',
         'https://www.googleapis.com/auth/yt-analytics.readonly'
@@ -344,56 +347,55 @@ class YouTubeService {
       requestBody.status.publishAt = publishAt;
     }
 
-    // ★ Retry with exponential backoff for 429 / 5xx transient errors
-    // Does NOT retry quota errors (403 rateLimitExceeded) — those need to wait for reset
-    const MAX_RETRIES = 3;
-    let lastError = null;
-    let response = null;
+    // ★ Retry + timeout + circuit breaker
+    //   เดิม: retry เอง 3 ครั้งแต่ "ไม่มี timeout" → TCP ค้าง = request ค้างตลอดกาล
+    //   ตอนนี้: timeout จริงพร้อม destroy stream (ไม่ปล่อย socket ลอย)
+    //   ยังคงไม่ retry quota error (403) เพราะต้องรอ reset
+    let activeStream = null;
 
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        response = await youtube.videos.insert({
-          part: 'snippet,status',
-          requestBody,
-          media: {
-            body: fs.createReadStream(filepath)
+    const isRetryable = (err) => {
+      const statusCode = err?.response?.status || err?.code;
+      const msg = String(err?.message || '').toLowerCase();
+      if (statusCode === 403 && msg.includes('quota')) return false;  // hard quota — ห้าม retry
+      if (err?.code === 'ETIMEDOUT_GUARD') return true;
+      return [429, 500, 502, 503, 504].includes(Number(statusCode))
+          || ['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'EAI_AGAIN', 'ENOTFOUND'].includes(statusCode);
+    };
+
+    const response = await guarded('youtube:upload', () => {
+      // ★ stream ใหม่ทุกครั้งที่ retry — stream เดิมถูกอ่านไปแล้วใช้ซ้ำไม่ได้
+      activeStream = fs.createReadStream(filepath);
+      return youtube.videos.insert({
+        part: 'snippet,status',
+        requestBody,
+        media: { body: activeStream },
+      }, {
+        onUploadProgress: (evt) => {
+          if (onProgress) {
+            const progress = Math.round((evt.bytesRead / fileSize) * 100);
+            onProgress(progress, evt.bytesRead, fileSize);
           }
-        }, {
-          onUploadProgress: (evt) => {
-            if (onProgress) {
-              const progress = Math.round((evt.bytesRead / fileSize) * 100);
-              onProgress(progress, evt.bytesRead, fileSize);
-            }
-          }
+        },
+      });
+    }, {
+      attempts:    C.YOUTUBE.MAX_UPLOAD_RETRIES,
+      baseDelayMs: C.YOUTUBE.RETRY_BASE_DELAY_MS,
+      timeoutMs:   C.YOUTUBE.UPLOAD_TIMEOUT_MS,
+      isRetryable,
+      // ★ ปิด stream ตอน timeout — ไม่ปล่อย fd + socket ค้าง
+      onTimeout: () => { try { activeStream?.destroy(); } catch (_) {} },
+      onRetry: (attempt, err, delay) => {
+        logger.warn(`[YouTube] Upload attempt ${attempt} ล้มเหลว — ลองใหม่ในอีก ${delay}ms`, {
+          title, error: err.message,
         });
-        lastError = null;
-        break; // success
-      } catch (err) {
-        lastError = err;
-        const statusCode = err?.response?.status || err?.code;
-        const isQuotaError = statusCode === 403 && err?.message?.toLowerCase().includes('quota');
-        const isRetryable = statusCode === 429 || statusCode === 500 || statusCode === 503;
+        try { activeStream?.destroy(); } catch (_) {}
+      },
+      breakerOpts: { failureThreshold: 5, openMs: 3 * 60_000 },
+    });
 
-        if (isQuotaError) {
-          // Hard quota error — propagate immediately, do not retry
-          throw err;
-        }
-
-        if (isRetryable && attempt < MAX_RETRIES) {
-          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s
-          logger.warn(`[YouTube] Upload attempt ${attempt} failed (${statusCode}), retrying in ${delay}ms`, {
-            title, error: err.message
-          });
-          await new Promise(r => setTimeout(r, delay));
-          continue;
-        }
-
-        // Non-retryable or exhausted retries
-        throw err;
-      }
+    if (!response?.data?.id) {
+      throw new Error('YouTube ตอบกลับไม่มี video ID — อัปโหลดอาจไม่สมบูรณ์');
     }
-
-    if (!response) throw lastError;
 
     const videoId = response.data.id;
     const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
@@ -411,6 +413,51 @@ class YouTubeService {
   }
 
   /**
+   * Delete video from YouTube — ลบคลิปที่โดนบล็อกออกจากช่อง
+   * @param {string} videoId - YouTube video ID
+   * @param {string} accountId - Optional account ID
+   * @returns {object} { success, videoId }
+   * 
+   * Quota cost: 50 units per delete
+   */
+  async deleteVideo(videoId, accountId = null) {
+    if (!videoId) throw new Error('videoId is required');
+
+    const client = this.getOAuth2Client(accountId);
+    if (!client || !client.credentials || !client.credentials.access_token) {
+      throw new Error('Not authenticated with YouTube');
+    }
+
+    const youtube = google.youtube({ version: 'v3', auth: client });
+
+    try {
+      // ★ เดิมไม่มี timeout/retry — delete ค้างได้ไม่จำกัด
+      await guarded('youtube:delete', () => youtube.videos.delete({ id: videoId }), {
+        attempts: 3, timeoutMs: 30_000,
+      });
+
+      // Consume 50 units for delete operation
+      if (accountId) {
+        accountManager.updateQuotaUsage(accountId, 50);
+      } else {
+        quotaManager.consume(50, 'video_delete');
+      }
+
+      logger.info('[YouTube] Video deleted successfully', { videoId, accountId });
+      return { success: true, videoId };
+    } catch (err) {
+      const statusCode = err?.response?.status || err?.code;
+      if (statusCode === 404) {
+        // Video already deleted or not found — treat as success
+        logger.warn('[YouTube] Video not found (already deleted?)', { videoId });
+        return { success: true, videoId, alreadyDeleted: true };
+      }
+      logger.error('[YouTube] Failed to delete video', { videoId, error: err.message, statusCode });
+      throw err;
+    }
+  }
+
+  /**
    * Get channel info
    * @param {string} accountId - Optional account ID
    */
@@ -420,10 +467,11 @@ class YouTubeService {
 
     try {
       const youtube = google.youtube({ version: 'v3', auth: client });
-      const response = await youtube.channels.list({
+      // ★ timeout + retry — เดิมไม่มี ทำให้หน้า dashboard ค้างรอถ้า API ช้า
+      const response = await guarded('youtube:channels', () => youtube.channels.list({
         part: 'snippet,statistics',
-        mine: true
-      });
+        mine: true,
+      }), { attempts: 2, timeoutMs: 15_000 });
 
       if (response.data.items && response.data.items.length > 0) {
         const channel = response.data.items[0];

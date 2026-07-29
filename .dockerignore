@@ -1,0 +1,45 @@
+# ═══════════════════════════════════════════════════════════════
+# Docker ignore — ลดขนาด build context + ป้องกัน secret หลุดเข้า image
+# ═══════════════════════════════════════════════════════════════
+
+# Dependencies (rebuilt in container)
+node_modules
+.kilo/node_modules
+
+# Persistent data (mounted as volumes)
+data/
+logs/
+downloads/
+uploads/
+.uploads/
+
+# Git
+.git
+.gitignore
+
+# Dev tools
+.vscode
+.kiro
+.kilo
+.superpowers
+
+# Secrets — NEVER include in image
+.env
+client_secret*.json
+token.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.log
+*.tmp
+*.corrupt
+
+# Docs (not needed at runtime)
+*.md
+!README.md
+
+# Browser session (dead code remnant)
+data/browser-session

@@ -1,54 +1,62 @@
-# ─────────────────────────────────────────────────────────────────
-# Fly.io deployment config — YouTube Auto Uploader
+# ═══════════════════════════════════════════════════════════════
+# Fly.io Configuration — YouTube Auto Uploader (24/7 Autonomous)
+# ═══════════════════════════════════════════════════════════════
 # Deploy: fly deploy
-# ─────────────────────────────────────────────────────────────────
+# Logs:   fly logs
+# SSH:    fly ssh console
+# ═══════════════════════════════════════════════════════════════
 
 app = "autoupload"
-primary_region = "sin"   # Singapore — ใกล้ Thailand ที่สุด
+primary_region = "sin"
 
 [build]
   dockerfile = "Dockerfile"
 
 [env]
-  NODE_ENV        = "production"
-  PORT            = "3000"
-  PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
-  PUPPETEER_EXECUTABLE_PATH        = "/usr/bin/chromium"
+  NODE_ENV = "production"
+  TZ = "Asia/Bangkok"
+  HOST = "0.0.0.0"
+  PORT = "3000"
 
 [http_service]
   internal_port = 3000
-  force_https   = true
-  auto_stop_machines  = false   # ★ อย่าให้หยุดเอง — ต้องทำงาน 24/7
+  force_https = true
+  auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
 
   [http_service.concurrency]
-    type       = "connections"
-    hard_limit = 100
-    soft_limit = 80
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[http_service.checks]]
+  grace_period = "30s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/api/health/live"
+
+[[http_service.checks]]
+  grace_period = "60s"
+  interval = "60s"
+  method = "GET"
+  timeout = "10s"
+  path = "/api/health/ready"
 
 [[vm]]
-  cpu_kind = "shared"
-  cpus     = 1
-  memory_mb = 512   # puppeteer ต้องการ RAM — upgrade เป็น 1024 ถ้า OOM
+  size = "shared-cpu-1x"
+  memory = "1024mb"
+  cpus = 1
 
-# Persistent volume สำหรับ data + downloads
 [[mounts]]
-  source      = "autoupload_data"
+  source = "autoupload_data"
   destination = "/app/data"
-  initial_size = "1gb"
 
 [[mounts]]
-  source      = "autoupload_downloads"
+  source = "autoupload_downloads"
   destination = "/app/downloads"
-  initial_size = "5gb"
 
-[checks]
-  [checks.health]
-    grace_period = "20s"
-    interval     = "30s"
-    method       = "GET"
-    path         = "/api/health"
-    port         = 3000
-    timeout      = "10s"
-    type         = "http"
+[[mounts]]
+  source = "autoupload_logs"
+  destination = "/app/logs"

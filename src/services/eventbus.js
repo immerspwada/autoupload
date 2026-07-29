@@ -16,6 +16,7 @@ class EventBus extends EventEmitter {
     this.rules = [];
     this.history = []; // event history for debugging
     this.maxHistory = 200;
+    this.metrics = { dispatched: 0, listenerErrors: 0, ruleErrors: 0 };
     this._setupDefaultRules();
   }
 
@@ -37,11 +38,25 @@ class EventBus extends EventEmitter {
 
     logger.debug(`[EventBus] ${event}`, payload);
 
-    // Emit the event for direct listeners
-    this.emit(event, payload);
+    // ★ Emit the event for direct listeners — ต้องไม่ปล่อย error หลุดออกไป
+    //   เดิม: listener ที่ throw (เช่น stats.save เจอดิสก์เต็ม) จะเด้งกลับไปที่คนเรียก
+    //   dispatch() ซึ่งอาจเป็น queue completion path → งานที่สำเร็จแล้วถูกนับเป็น failed
+    try {
+      this.emit(event, payload);
+    } catch (err) {
+      this.metrics.listenerErrors++;
+      logger.error(`[EventBus] listener ของ "${event}" เกิด error`, {
+        error: err.message, stack: err.stack,
+      });
+    }
 
-    // Run rules engine
+    // Run rules engine (มี try/catch ต่อ rule อยู่แล้ว)
     this._executeRules(event, payload);
+    this.metrics.dispatched++;
+  }
+
+  getMetrics() {
+    return { ...this.metrics, historySize: this.history.length, rules: this.rules.length };
   }
 
   // ==================== RULES ENGINE ====================
@@ -72,6 +87,7 @@ class EventBus extends EventEmitter {
           rule.then(payload, this, event);
         }
       } catch (err) {
+        this.metrics.ruleErrors++;
         logger.error(`[EventBus] Rule "${rule.name}" error`, {
           rule: rule.id,
           event,
@@ -353,6 +369,135 @@ class EventBus extends EventEmitter {
           message: payload.message,
           source: 'seo'
         });
+      }
+    });
+
+    // ──────── RULE 13: Video Deleted → Notify + Dashboard ────────
+    this.addRule({
+      id: 'video_deleted_propagate',
+      name: 'Video Deleted → Notify + Update Dashboard',
+      when: 'upload:video_deleted',
+      priority: 10,
+      then: (payload, bus) => {
+        activityLogger.log(
+          'upload:video_deleted',
+          `🗑️ ลบวิดีโอจาก YouTube: ${payload.title || payload.videoId}`,
+          {
+            videoId: payload.videoId,
+            title: payload.title,
+            reason: payload.reason || 'blocked_content'
+          },
+          'warning'
+        );
+
+        bus.dispatch('notification:send', {
+          level: 'warning',
+          title: 'ลบวิดีโอจาก YouTube',
+          message: `${payload.title || payload.videoId} — ${payload.reason || 'เนื้อหาผิดนโยบาย'}`,
+          source: 'monetization'
+        });
+        bus.dispatch('dashboard:refresh', { reason: 'video_deleted' });
+      }
+    });
+
+    // ══════════════════════════════════════════════════════════════
+    //  ENGINE RULES (Task 13)
+    // ══════════════════════════════════════════════════════════════
+
+    // ──────── RULE 14: Engine Degraded → Notify ────────
+    this.addRule({
+      id: 'engine_degraded_notify',
+      name: 'Engine Degraded → Alert Operator',
+      when: 'engine:degraded',
+      priority: 15,
+      then: (payload, bus) => {
+        activityLogger.log('engine:degraded',
+          `⚠️ Engine degraded — ${payload.consecutiveErrors} consecutive errors`,
+          payload, 'error');
+        bus.dispatch('notification:send', {
+          level: 'error',
+          title: 'Engine Degraded',
+          message: `ระบบล้มเหลวติดกัน ${payload.consecutiveErrors} ครั้ง — ลองใหม่ทุก 30 นาที`,
+          source: 'engine',
+        });
+      }
+    });
+
+    // ──────── RULE 15: Engine Stuck → Notify ────────
+    this.addRule({
+      id: 'engine_stuck_notify',
+      name: 'Engine Stuck → Alert Operator',
+      when: 'engine:stuck',
+      priority: 15,
+      then: (payload, bus) => {
+        activityLogger.log('engine:stuck',
+          `🔒 Engine stuck in ${payload.phase} for ${payload.stuckForSeconds}s`,
+          payload, 'error');
+        bus.dispatch('notification:send', {
+          level: 'error',
+          title: 'Engine ค้าง!',
+          message: `Phase "${payload.phase}" ค้างมา ${Math.round(payload.stuckForSeconds / 60)} นาที`,
+          source: 'engine',
+        });
+      }
+    });
+
+    // ──────── RULE 16: Engine Blocked → Notify ────────
+    this.addRule({
+      id: 'engine_blocked_notify',
+      name: 'Engine Blocked → Alert Operator',
+      when: 'engine:blocked',
+      priority: 15,
+      then: (payload, bus) => {
+        activityLogger.log('engine:blocked',
+          `🚫 Engine blocked: ${payload.reason}`,
+          payload, 'error');
+        bus.dispatch('notification:send', {
+          level: 'error',
+          title: 'Engine ถูกบล็อก',
+          message: payload.reason || 'ไม่ทราบสาเหตุ',
+          source: 'engine',
+        });
+      }
+    });
+
+    // ──────── RULE 17: Engine State Changed → Log + Dashboard ────────
+    this.addRule({
+      id: 'engine_state_changed_log',
+      name: 'Engine State → Activity Log + Dashboard',
+      when: 'engine:state_changed',
+      priority: 5,
+      then: (payload, bus) => {
+        activityLogger.log('engine:state_changed',
+          `🔄 Engine: ${payload.from} → ${payload.to} (${payload.reason || ''})`,
+          { from: payload.from, to: payload.to, reason: payload.reason }, 'info');
+        bus.dispatch('dashboard:refresh', { reason: 'engine_state_changed' });
+      }
+    });
+
+    // ──────── RULE 18: Engine Cycle Completed → Log ────────
+    this.addRule({
+      id: 'engine_cycle_completed_log',
+      name: 'Engine Cycle Done → Activity Log',
+      when: 'engine:cycle_completed',
+      priority: 5,
+      then: (payload) => {
+        activityLogger.log('engine:cycle_completed',
+          `✅ Cycle #${payload.cycleCount} เสร็จ — อัป ${payload.queued || 0}, ข้าม ${payload.skipped || 0}`,
+          payload, 'success');
+      }
+    });
+
+    // ──────── RULE 19: Engine Quota Wait → Log ────────
+    this.addRule({
+      id: 'engine_quota_wait_log',
+      name: 'Engine Quota Wait → Activity Log',
+      when: 'engine:quota_wait',
+      priority: 5,
+      then: (payload) => {
+        activityLogger.log('engine:quota_wait',
+          `⏸️ Quota หมด — รอ reset ${payload.nextActionAt || '?'}`,
+          payload, 'warning');
       }
     });
   }

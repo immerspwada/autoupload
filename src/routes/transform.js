@@ -17,6 +17,20 @@ const fs = require('fs');
 const videoTransform = require('../services/videoTransform');
 const { settings } = require('../utils/store');
 const logger = require('../utils/logger');
+const C = require('../config/constants');
+const { resolveSafe, resolveSafeMany, PathGuardError } = require('../utils/pathGuard');
+const diskGuard = require('../utils/diskGuard');
+
+/**
+ * ★ ตอบ error ของ path guard ให้เป็นข้อความที่อ่านรู้เรื่อง
+ * เดิม route รับ filepath อะไรก็ได้จาก body → ffprobe/ffmpeg ไฟล์ไหนก็ได้บนเครื่อง
+ */
+function handlePathError(res, err) {
+  if (err instanceof PathGuardError) {
+    return res.status(err.statusCode).json({ error: err.message, code: err.code });
+  }
+  return null;
+}
 
 // ─── GET /status — ffmpeg health + stats ─────────────────────────
 router.get('/status', async (req, res) => {
@@ -52,25 +66,27 @@ router.get('/config', (req, res) => {
 });
 
 // ─── POST /config — update transform settings ────────────────────
-router.post('/config', (req, res) => {
+router.post('/config', async (req, res) => {
   try {
-    const currentSettings = settings.load();
     const newTransformConfig = req.body;
 
     // Validate basic structure
-    if (typeof newTransformConfig !== 'object') {
+    if (!newTransformConfig || typeof newTransformConfig !== 'object' || Array.isArray(newTransformConfig)) {
       return res.status(400).json({ error: 'Config ต้องเป็น object' });
     }
 
-    // Merge with existing
-    currentSettings.videoTransform = {
-      ...(currentSettings.videoTransform || {}),
-      ...newTransformConfig,
-    };
+    // ★ safeUpdate — เดิม load()+save() ทับ settings ที่หน้าอื่นเพิ่งบันทึก
+    await settings.safeUpdate((current) => {
+      current.videoTransform = {
+        ...(current.videoTransform || {}),
+        ...newTransformConfig,
+      };
+      return current;
+    });
 
-    settings.save(currentSettings);
     logger.info('[Transform] Config updated', { keys: Object.keys(newTransformConfig) });
 
+    // getConfig() clamp ค่าให้อยู่ในช่วงที่ ffmpeg รับได้ — ตอบค่าที่ใช้จริงกลับไป
     res.json({ success: true, config: videoTransform.getConfig() });
   } catch (error) {
     logger.error('[Transform Route] Config update failed', { error: error.message });
@@ -80,9 +96,11 @@ router.post('/config', (req, res) => {
 
 // ─── POST /preview — Probe video + show what transform would do ──
 router.post('/preview', async (req, res) => {
-  const { filepath } = req.body;
-  if (!filepath || !fs.existsSync(filepath)) {
-    return res.status(400).json({ error: 'ไฟล์ไม่พบ — กรุณาระบุ filepath ที่ถูกต้อง' });
+  let filepath;
+  try {
+    filepath = resolveSafe(req.body?.filepath);
+  } catch (err) {
+    return handlePathError(res, err) || res.status(400).json({ error: err.message });
   }
 
   try {
@@ -138,9 +156,11 @@ router.post('/preview', async (req, res) => {
 
 // ─── POST /single — Transform one video file ─────────────────────
 router.post('/single', async (req, res) => {
-  const { filepath, options } = req.body;
-  if (!filepath || !fs.existsSync(filepath)) {
-    return res.status(400).json({ error: 'ไฟล์ไม่พบ — กรุณาระบุ filepath ที่ถูกต้อง' });
+  let filepath;
+  try {
+    filepath = resolveSafe(req.body?.filepath, { maxBytes: C.VIDEO_TRANSFORM.MAX_INPUT_SIZE_BYTES });
+  } catch (err) {
+    return handlePathError(res, err) || res.status(400).json({ error: err.message });
   }
 
   try {
@@ -149,25 +169,35 @@ router.post('/single', async (req, res) => {
       return res.status(503).json({ error: 'ffmpeg ไม่พร้อมใช้งาน', details: health.error });
     }
 
-    const result = await videoTransform.transformSingle(filepath, options || {});
+    const space = diskGuard.check(fs.statSync(filepath).size * diskGuard.TRANSFORM_MULTIPLIER, { label: 'transform' });
+    if (!space.ok) {
+      return res.status(507).json({ error: 'พื้นที่ดิสก์ไม่พอ', code: 'DISK_FULL', detail: space.reason });
+    }
+
+    const result = await videoTransform.transformSingle(filepath, req.body?.options || {});
     res.json({ success: true, ...result });
   } catch (error) {
     logger.error('[Transform Route] Single transform failed', { error: error.message });
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message, code: error.code });
   }
 });
 
 // ─── POST /compile — Create compilation from multiple clips ──────
 router.post('/compile', async (req, res) => {
-  const { filepaths, options } = req.body;
+  const { filepaths, options } = req.body || {};
   if (!Array.isArray(filepaths) || filepaths.length < 2) {
     return res.status(400).json({ error: 'ต้องมีอย่างน้อย 2 ไฟล์สำหรับ compilation' });
   }
 
-  // Validate all files exist
-  const missing = filepaths.filter(f => !fs.existsSync(f));
-  if (missing.length > 0) {
-    return res.status(400).json({ error: 'ไฟล์บางส่วนไม่พบ', missing });
+  let safePaths;
+  try {
+    // ★ ทุก path ต้องอยู่ในโฟลเดอร์ของระบบ + จำกัดจำนวนไฟล์ (กัน payload ยิงงานหนัก)
+    safePaths = resolveSafeMany(filepaths, {
+      maxCount: 30,
+      maxBytes: C.VIDEO_TRANSFORM.MAX_INPUT_SIZE_BYTES,
+    });
+  } catch (err) {
+    return handlePathError(res, err) || res.status(400).json({ error: err.message });
   }
 
   try {
@@ -176,12 +206,24 @@ router.post('/compile', async (req, res) => {
       return res.status(503).json({ error: 'ffmpeg ไม่พร้อมใช้งาน', details: health.error });
     }
 
-    const result = await videoTransform.createCompilation(filepaths, options || {});
+    const result = await videoTransform.createCompilation(safePaths, options || {});
     res.json({ success: true, ...result });
   } catch (error) {
     logger.error('[Transform Route] Compilation failed', { error: error.message });
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message, code: error.code });
   }
+});
+
+// ─── POST /kill — ยุติงาน ffmpeg ที่ค้าง ──────────────────────────
+router.post('/kill', (req, res) => {
+  const result = videoTransform.killAll('manual');
+  logger.warn('[Transform] ผู้ใช้สั่งยุติงาน ffmpeg', result);
+  res.json({ success: true, ...result });
+});
+
+// ─── GET /running — งาน ffmpeg ที่กำลังวิ่ง ────────────────────────
+router.get('/running', (req, res) => {
+  res.json({ running: videoTransform.getRunning(), stats: videoTransform.getStats() });
 });
 
 module.exports = router;

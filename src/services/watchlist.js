@@ -69,13 +69,18 @@ function buildUploadMaps(allUploads) {
 class WatchlistService extends EventEmitter {
   constructor() {
     super();
+    // ★ SSE client แต่ละคนสมัคร listener 'progress' — เกิน 10 คนจะขึ้น warning
+    this.setMaxListeners(50);
     this.runState = {
       running: false, startedAt: null, phase: 'idle',
       currentKeyword: null, keywordIndex: 0, keywordTotal: 0,
       steps: [], summary: null,
     };
-    this._seenIds    = {};  // { keyword: Set<id> }
-    this._kwRate     = {};  // { keyword: { passed, total } }
+    // ★ Map แทน object — มีลำดับ insertion ให้ evict คีย์เก่าได้
+    //   เดิมเป็น object และ trending fallback สร้าง keyword ใหม่ทุกรอบ
+    //   → จำนวน key โตขึ้นเรื่อยๆ ตลอดอายุ process (แต่ละ key ถือ Set 500 ตัว)
+    this._seenIds    = new Map();  // keyword → Set<id>
+    this._kwRate     = new Map();  // keyword → { passed, total }
     this._dlErrors   = 0;
     this._dlErrReset = 0;
   }
@@ -93,10 +98,24 @@ class WatchlistService extends EventEmitter {
 
   // ── Smart keyword ordering ─────────────────────────────────────────
 
+  /**
+   * ★ Evict คีย์เก่าเมื่อจำนวน keyword ที่ track เกินเพดาน
+   * Map เก็บลำดับ insertion → ตัวแรกคือเก่าสุด
+   */
+  _evictTracking() {
+    const MAX = C.WATCHLIST.MAX_TRACKED_KEYWORDS;
+    for (const map of [this._seenIds, this._kwRate]) {
+      while (map.size > MAX) {
+        const oldest = map.keys().next().value;
+        map.delete(oldest);
+      }
+    }
+  }
+
   _sorted(keywords) {
     return [...keywords].sort((a, b) => {
-      const ra = this._kwRate[a.keyword];
-      const rb = this._kwRate[b.keyword];
+      const ra = this._kwRate.get(a.keyword);
+      const rb = this._kwRate.get(b.keyword);
       const rA = ra && ra.total >= 3 ? ra.passed / ra.total : 0.5;
       const rB = rb && rb.total >= 3 ? rb.passed / rb.total : 0.5;
       return rB - rA;
@@ -104,9 +123,11 @@ class WatchlistService extends EventEmitter {
   }
 
   _trackRate(keyword, passed, total) {
-    if (!this._kwRate[keyword]) this._kwRate[keyword] = { passed: 0, total: 0 };
-    this._kwRate[keyword].passed += passed;
-    this._kwRate[keyword].total  += total;
+    const rec = this._kwRate.get(keyword) || { passed: 0, total: 0 };
+    rec.passed += passed;
+    rec.total  += total;
+    this._kwRate.set(keyword, rec);
+    this._evictTracking();
   }
 
   // ── DL error backoff ───────────────────────────────────────────────
@@ -213,7 +234,7 @@ class WatchlistService extends EventEmitter {
       enabled:          (d.keywords || []).filter(k => k.enabled).length,
       lastRunAt:        d.lastRunAt,
       totalAutoUploaded: d.totalAutoUploaded || 0,
-      smartRates:       Object.entries(this._kwRate).map(([kw, r]) => ({
+      smartRates:       Array.from(this._kwRate.entries()).map(([kw, r]) => ({
         keyword: kw,
         rate:    r.total > 0 ? +(r.passed / r.total * 100).toFixed(0) : null,
         total:   r.total,
@@ -278,8 +299,8 @@ class WatchlistService extends EventEmitter {
           const videos = await tiktok.searchVideos(kw.keyword, kw.countPerRun);
 
           // ★ Session dedup (in-memory, ป้องกันซ้ำข้ามรอบ)
-          if (!this._seenIds[kw.keyword]) this._seenIds[kw.keyword] = new Set();
-          const seen = this._seenIds[kw.keyword];
+          let seen = this._seenIds.get(kw.keyword);
+          if (!seen) { seen = new Set(); this._seenIds.set(kw.keyword, seen); this._evictTracking(); }
           const fresh = videos.filter(v => {
             const id = v.id || v.videoUrl;
             if (seen.has(id)) return false;
@@ -296,7 +317,8 @@ class WatchlistService extends EventEmitter {
 
           // ★ Load uploads.json ครั้งเดียวก่อน loop ทั้ง keyword
           //   เดิม: isDup(..., uploads.load()) ถูกเรียกทุก video = O(n×m) disk I/O
-          const allUploads = uploads.load();
+          //   loadRef = ไม่ clone (แค่อ่านสร้าง index ไม่แก้ข้อมูล)
+          const allUploads = uploads.loadRef();
           const { urlMap, idMap } = buildUploadMaps(allUploads);
 
           let kwQ = 0, kwS = 0, kwP = 0;

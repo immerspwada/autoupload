@@ -15,6 +15,7 @@ const path    = require('path');
 const { settings, uploads } = require('../utils/store');
 const orchestrator = require('../services/orchestrator');
 const { formatBytes: formatFileSize } = require('../utils/format');
+const { requireAuthForDestructive } = require('../middleware/security');
 
 const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.mpeg', '.mpg'];
 
@@ -73,13 +74,114 @@ router.get('/settings', (req, res) => {
   res.json(settings.load());
 });
 
-router.post('/settings', (req, res) => {
-  const current = settings.load();
-  const updated = { ...current, ...req.body };
-  settings.save(updated);
-  orchestrator.onSettingsUpdated(updated);
-  res.json({ success: true, settings: updated });
+/**
+ * ★ POST /settings — เดิม spread req.body ลง settings.json ตรงๆ ไม่ตรวจอะไรเลย
+ *   ทำให้ตั้ง folder เป็น path ไหนก็ได้ / ใส่ค่าที่ทำ ffmpeg พังได้
+ */
+router.post('/settings', async (req, res, next) => {
+  try {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({ error: 'ข้อมูลต้องเป็น object' });
+    }
+
+    const { clean, errors } = validateSettings(body);
+    if (errors.length > 0) {
+      return res.status(400).json({ error: 'ค่าที่ส่งมาไม่ถูกต้อง', details: errors });
+    }
+
+    let updated;
+    // ★ safeUpdate — เดิม load()+save() ทับค่าที่หน้าอื่นเพิ่งบันทึกไป
+    await settings.safeUpdate((current) => {
+      updated = { ...current, ...clean };
+      return updated;
+    });
+
+    orchestrator.onSettingsUpdated(updated);
+    res.json({ success: true, settings: updated, ignored: Object.keys(body).filter(k => !(k in clean)) });
+  } catch (err) { next(err); }
 });
+
+/** ตรวจ + แปลงค่า settings ให้อยู่ในรูปที่ระบบใช้ได้จริง */
+function validateSettings(body) {
+  const clean = {};
+  const errors = [];
+
+  // ── folder: ต้องเป็นโฟลเดอร์ที่มีอยู่จริงและอ่านได้ ──
+  if ('folder' in body) {
+    const f = body.folder;
+    if (f === '' || f === null) {
+      clean.folder = '';
+    } else if (typeof f !== 'string') {
+      errors.push('folder ต้องเป็นข้อความ');
+    } else {
+      const resolved = path.resolve(f);
+      if (!fs.existsSync(resolved)) {
+        errors.push(`ไม่พบโฟลเดอร์: ${resolved}`);
+      } else {
+        try {
+          if (!fs.statSync(resolved).isDirectory()) errors.push('folder ต้องเป็นโฟลเดอร์ ไม่ใช่ไฟล์');
+          else { fs.accessSync(resolved, fs.constants.R_OK); clean.folder = resolved; }
+        } catch (_) {
+          errors.push(`อ่านโฟลเดอร์ไม่ได้ (สิทธิ์ไม่พอ): ${resolved}`);
+        }
+      }
+    }
+  }
+
+  const enums = {
+    privacy:      ['public', 'private', 'unlisted'],
+    seoMode:      ['auto', 'seo', 'manual'],
+    channelStage: ['early_stage', 'pre_ypp', 'monetized'],
+  };
+  for (const [key, allowed] of Object.entries(enums)) {
+    if (!(key in body)) continue;
+    if (!allowed.includes(body[key])) errors.push(`${key} ต้องเป็นหนึ่งใน: ${allowed.join(', ')}`);
+    else clean[key] = body[key];
+  }
+
+  for (const key of ['deleteAfterUpload', 'autoSchedule']) {
+    if (key in body) {
+      if (typeof body[key] !== 'boolean') errors.push(`${key} ต้องเป็น true/false`);
+      else clean[key] = body[key];
+    }
+  }
+
+  if ('preferredPublishHour' in body) {
+    const h = parseInt(body.preferredPublishHour, 10);
+    if (!Number.isInteger(h) || h < 0 || h > 23) errors.push('preferredPublishHour ต้องเป็น 0-23');
+    else clean.preferredPublishHour = h;
+  }
+
+  if ('categoryOverride' in body) {
+    if (body.categoryOverride === '' || body.categoryOverride === null) clean.categoryOverride = '';
+    else {
+      const c = parseInt(body.categoryOverride, 10);
+      if (!Number.isInteger(c) || c < 1 || c > 44) errors.push('categoryOverride ต้องเป็นรหัสหมวด YouTube (1-44)');
+      else clean.categoryOverride = String(c);
+    }
+  }
+
+  const strings = {
+    defaultDescription: 5000, defaultTags: 500, titleTemplate: 200,
+    channelDescription: 2000, channelName: 100,
+  };
+  for (const [key, max] of Object.entries(strings)) {
+    if (!(key in body)) continue;
+    if (typeof body[key] !== 'string') errors.push(`${key} ต้องเป็นข้อความ`);
+    else if (body[key].length > max) errors.push(`${key} ยาวเกิน ${max} ตัวอักษร`);
+    else clean[key] = body[key];
+  }
+
+  // videoTransform — ค่าตัวเลขถูก clamp อีกชั้นใน videoTransform._sanitizeConfig()
+  if ('videoTransform' in body) {
+    const vt = body.videoTransform;
+    if (!vt || typeof vt !== 'object' || Array.isArray(vt)) errors.push('videoTransform ต้องเป็น object');
+    else clean.videoTransform = vt;
+  }
+
+  return { clean, errors };
+}
 
 // ── Upload history ────────────────────────────────────────────────
 
@@ -95,9 +197,13 @@ router.get('/history', (req, res) => {
   });
 });
 
-router.delete('/history', (req, res) => {
-  uploads.save([]);
-  res.json({ success: true });
+router.delete('/history', requireAuthForDestructive, async (req, res, next) => {
+  try {
+    const before = uploads.loadRef().length;
+    await uploads.safeUpdate(() => []);
+    require('../utils/logger').warn('ล้างประวัติการอัปโหลด', { removed: before, ip: req.ip });
+    res.json({ success: true, removed: before });
+  } catch (err) { next(err); }
 });
 
 // ── Downloads listing ─────────────────────────────────────────────

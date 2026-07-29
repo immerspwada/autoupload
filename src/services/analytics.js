@@ -12,6 +12,7 @@ const { google } = require('googleapis');
 const logger = require('../utils/logger');
 const { uploads } = require('../utils/store');
 const youtubeService = require('./youtube');
+const { guarded } = require('../utils/resilience');
 
 // Path to store analytics cache
 const ANALYTICS_CACHE_PATH = require('path').join(__dirname, '../../data/analytics_cache.json');
@@ -38,13 +39,19 @@ class AnalyticsService {
       const endDate = new Date().toISOString().split('T')[0];
       const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       
-      const response = await youtubeAnalytics.reports.query({
+      // ★ ห่อด้วย circuit breaker + timeout — เดิมไม่มี timeout เลย
+      //   ถ้า Analytics API ค้าง จะค้างทั้ง loop 20 คลิป
+      const response = await guarded('youtube:analytics', () => youtubeAnalytics.reports.query({
         ids: 'channel==MINE',
         startDate,
         endDate,
         metrics: 'views,estimatedMinutesWatched,averageViewDuration,estimatedRevenue',
         filters: `video==${videoId}`,
-        dimensions: 'day'
+        dimensions: 'day',
+      }), {
+        attempts: 2,
+        timeoutMs: 20_000,
+        breakerOpts: { failureThreshold: 6, openMs: 5 * 60_000 },
       });
 
       // ★ Defensive check — handle missing data gracefully
@@ -78,7 +85,13 @@ class AnalyticsService {
       const errorMsg = err?.message || '';
       const isNotEnabled = errorMsg.includes('has not been used') || errorMsg.includes('is disabled');
       const isQuotaError = err?.response?.status === 403 || errorMsg.toLowerCase().includes('quota');
-      
+
+      // ★ circuit เปิด = Analytics API ล่มอยู่ ไม่ต้อง log ซ้ำทุกคลิป
+      if (err?.code === 'ECIRCUITOPEN') {
+        logger.debug('Analytics circuit open — ข้ามการดึงข้อมูล', { videoId });
+        return null;
+      }
+
       if (isNotEnabled) {
         // Log once per session to avoid spam
         if (!this._warnedAnalyticsDisabled) {
@@ -102,30 +115,58 @@ class AnalyticsService {
    * Call this periodically (e.g., daily) to build feedback loop
    */
   async updateUploadPerformance(accountId = null) {
-    const allUploads = uploads.load();
-    const tiktokUploads = allUploads.filter(u => u.source === 'tiktok' && u.youtube_id && !u.performanceFetchedAt);
-    
-    if (tiktokUploads.length === 0) {
-      logger.info('No TikTok uploads to update performance for');
-      return { updated: 0 };
+    // ★ กันรันซ้อน — รอบเดียวใช้เวลา ~20-30 วิ ถ้ายิงซ้ำจะดึง API ซ้ำเปล่าๆ
+    if (this._updatingPerformance) {
+      return { updated: 0, skipped: 'กำลังอัปเดตอยู่แล้ว' };
     }
+    this._updatingPerformance = true;
 
-    let updated = 0;
-    for (const record of tiktokUploads.slice(0, 20)) { // Limit to 20 per run
-      const perf = await this.fetchVideoPerformance(record.youtube_id, accountId);
-      if (perf) {
-        record.performance = perf;
-        record.performanceFetchedAt = new Date().toISOString();
-        updated++;
+    try {
+      const candidates = uploads.loadRef()
+        .filter(u => u.source === 'tiktok' && u.youtube_id && !u.performanceFetchedAt)
+        .slice(0, 20)                                   // Limit to 20 per run
+        .map(u => ({ youtube_id: u.youtube_id }));
+
+      if (candidates.length === 0) {
+        logger.info('No TikTok uploads to update performance for');
+        return { updated: 0 };
       }
-      // Rate limit: wait 1 second between API calls
-      await new Promise(r => setTimeout(r, 1000));
-    }
 
-    uploads.save(allUploads);
-    logger.info('Updated upload performance', { updated, total: tiktokUploads.length });
-    
-    return { updated, total: tiktokUploads.length };
+      // ── เฟส 1: ดึงข้อมูลจาก API (ไม่แตะ store เลย) ────────────────
+      //   ★ เดิม: load ทั้ง array → await 20 ครั้ง (~30 วิ) → save array เดิมทับ
+      //     ทำให้ record ที่ถูกบันทึกระหว่างนั้น (scheduler/watchlist/batch) หายหมด
+      const fetched = new Map();
+      for (const c of candidates) {
+        const perf = await this.fetchVideoPerformance(c.youtube_id, accountId);
+        if (perf) fetched.set(c.youtube_id, perf);
+        await new Promise(r => setTimeout(r, 1000));   // Rate limit
+      }
+
+      if (fetched.size === 0) {
+        return { updated: 0, total: candidates.length };
+      }
+
+      // ── เฟส 2: merge เข้า store แบบ serialized (อ่านสดตอนถึงคิว) ───
+      let updated = 0;
+      await uploads.safeUpdate((arr) => {
+        const now = new Date().toISOString();
+        for (const record of arr) {
+          const perf = fetched.get(record.youtube_id);
+          if (perf && !record.performanceFetchedAt) {
+            record.performance = perf;
+            record.performanceFetchedAt = now;
+            updated++;
+          }
+        }
+        return arr;
+      });
+
+      logger.info('Updated upload performance', { updated, total: candidates.length });
+      return { updated, total: candidates.length };
+
+    } finally {
+      this._updatingPerformance = false;
+    }
   }
 
   /**

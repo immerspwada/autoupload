@@ -102,11 +102,18 @@ class Scheduler {
 
     const intervalMs = (config.intervalMinutes || C.SCHEDULER.DEFAULT_INTERVAL_MINUTES) * 60_000;
     this.stop();
+    // ★ ล้าง flag หลัง stop() — ไม่งั้นลูปที่เพิ่งถูกสั่งหยุดจะหยุดทันทีที่เริ่มใหม่
+    this._loopStopRequested = false;
 
-    this.interval = setInterval(() => this.scan(), intervalMs);
+    // ★ scan() ต้องไม่โยน error ออกมาใน timer callback
+    this.interval = setInterval(() => {
+      try { this.scan(); }
+      catch (err) { logger.error('Scheduler scan error', { error: err.message }); }
+    }, intervalMs);
     logger.info('Scheduler started', { intervalMinutes: config.intervalMinutes || C.SCHEDULER.DEFAULT_INTERVAL_MINUTES });
 
-    this.scan();
+    try { this.scan(); }
+    catch (err) { logger.error('Scheduler initial scan error', { error: err.message }); }
     this.startWatcher();
   }
 
@@ -120,6 +127,8 @@ class Scheduler {
       this._quotaWaitTimer = null;
     }
     this._quotaPaused = false;
+    // ★ สั่งลูปต่อเนื่องให้หยุดด้วย — เดิม stop() ไม่แตะลูป ทำให้ยังวิ่งต่อหลังปิด scheduler
+    this.requestLoopStop();
     this.stopWatcher();
     logger.info('Scheduler stopped');
   }
@@ -176,11 +185,21 @@ class Scheduler {
       return { scanned: 0, queued: 0 };
     }
 
-    const existingUploads = uploads.load();
+    const existingUploads = uploads.loadRef();
     // Build a Set for O(1) duplicate lookup
     const uploadedSet = new Set(existingUploads.map(u => u.filename));
 
-    const files = fs.readdirSync(folder).filter(f => {
+    // ★ readdirSync throw ได้ (EACCES/ENOENT) และ scan() ถูกเรียกจาก setInterval
+    //   → uncaught exception ในtimer callback = scheduler ตายเงียบ
+    let dirEntries;
+    try {
+      dirEntries = fs.readdirSync(folder);
+    } catch (err) {
+      logger.error('อ่านโฟลเดอร์ที่ตั้งไว้ไม่ได้ — ข้ามรอบนี้', { folder, error: err.message });
+      return { scanned: 0, queued: 0, error: err.message };
+    }
+
+    const files = dirEntries.filter(f => {
       if (!VIDEO_EXTENSIONS.includes(path.extname(f).toLowerCase())) return false;
       return !uploadedSet.has(f);
     });
@@ -192,18 +211,13 @@ class Scheduler {
       queued++;
     });
 
-    schedulerStore.save({ ...schedulerStore.load(), lastRun: new Date().toISOString() });
+    // ★ safeUpdate — เดิม load()+save() ทับค่า enabled/interval ที่ route เพิ่งบันทึก
+    schedulerStore.safeUpdate((s) => { s.lastRun = new Date().toISOString(); return s; });
     logger.info('Scheduler scan complete', { scanned: files.length, queued });
 
-    // ★ Fire continuous loop AFTER watchlist finishes (await instead of fire-and-forget)
-    //   ป้องกัน race: loop เริ่มใหม่ก่อน watchlist รอบก่อนจะเสร็จ
-    this.runWatchlist()
-      .then(() => this._startContinuousLoop())
-      .catch(err => {
-        logger.error('Watchlist run error', { error: err.message });
-        // Still start the continuous loop even if watchlist fails
-        this._startContinuousLoop().catch(() => {});
-      });
+    // ★ ENGINE TAKEOVER: watchlist loop ถูกย้ายไป Engine แล้ว (Task 11)
+    //   scan() ทำเฉพาะ folder scan + watcher (source='folder') เท่านั้น
+    //   ห้ามเรียก runWatchlist() หรือ _startContinuousLoop() ต่อท้ายอีก
 
     return { scanned: files.length, queued };
   }
@@ -325,14 +339,28 @@ class Scheduler {
 
   async _startContinuousLoop() {
     if (this._loopRunning) return;
-    if (!schedulerStore.load().enabled) return;
+    if (!schedulerStore.loadRef().enabled) return;
 
     this._loopRunning = true;
+    this._loopStartedAt = Date.now();
+    this._loopIteration = 0;
+    this._loopStopRequested = false;
     logger.info('[Loop] Continuous loop started');
 
     try {
-      while (true) {
-        if (!schedulerStore.load().enabled) {
+      // ★ เดิมเป็น while(true) — ถ้ามีอะไรผิดปกติจะวนตลอดกาลโดยไม่มีใครรู้
+      //   ตอนนี้มีเพดานรอบ + ตรวจ error ติดกัน + ปล่อย _loopRunning ทุกกรณี
+      let consecutiveErrors = 0;
+
+      while (!this._loopStopRequested) {
+        this._loopIteration++;
+
+        if (this._loopIteration > C.SCHEDULER.LOOP_MAX_ITERATIONS) {
+          logger.warn('[Loop] ถึงเพดานจำนวนรอบ — รีสตาร์ทลูปใหม่เพื่อล้าง state');
+          break;
+        }
+
+        if (!schedulerStore.loadRef().enabled) {
           logger.info('[Loop] Scheduler disabled — stopping loop');
           break;
         }
@@ -342,18 +370,40 @@ class Scheduler {
           break;
         }
 
-        await this._waitForQueueEmpty();
+        // ★ รอคิวว่างแบบมีเพดานเวลา — เดิมรอไม่จำกัด งานติดค้าง 1 ชิ้น = ลูปตายถาวร
+        const waited = await this._waitForQueueEmpty();
+        if (!waited.ok) {
+          logger.error('[Loop] คิวไม่ว่างในเวลาที่กำหนด — หยุดลูปเพื่อไม่ให้ค้าง', waited);
+          break;
+        }
 
-        // ★ Double-check quota AFTER queue empties — ป้องกัน spin ถ้า quota หมดระหว่าง queue process
+        // ★ Double-check quota AFTER queue empties
         if (!this._checkQuotaBeforeScan()) {
           logger.info('[Loop] Quota หมดหลัง queue ว่าง — หยุดรอ reset');
           break;
         }
 
-        logger.info('[Loop] Running next watchlist cycle...');
-        const result = await this.runWatchlist();
+        logger.info('[Loop] Running next watchlist cycle...', { iteration: this._loopIteration });
 
-        if (result.queued === 0) {
+        let result;
+        try {
+          result = await this.runWatchlist();
+          consecutiveErrors = 0;
+        } catch (err) {
+          consecutiveErrors++;
+          logger.error('[Loop] watchlist cycle ล้มเหลว', {
+            error: err.message, consecutiveErrors,
+          });
+          if (consecutiveErrors >= C.SCHEDULER.LOOP_MAX_CONSECUTIVE_ERRORS) {
+            logger.error('[Loop] ล้มเหลวติดกันหลายรอบ — หยุดลูป');
+            break;
+          }
+          // backoff แล้วลองใหม่
+          await this._delay(Math.min(consecutiveErrors * 60_000, C.SCHEDULER.LOOP_COOLDOWN_MS));
+          continue;
+        }
+
+        if ((result?.queued || 0) === 0) {
           const cooldownMs = C.SCHEDULER.LOOP_COOLDOWN_MS;
           logger.info(`[Loop] ไม่มีคลิปใหม่ — รอ ${cooldownMs / 60_000} นาทีแล้วลองใหม่`);
           await this._delay(cooldownMs);
@@ -362,22 +412,66 @@ class Scheduler {
           await this._delay(5000);
         }
       }
+    } catch (err) {
+      logger.error('[Loop] ลูปหยุดเพราะ error ที่ไม่คาดคิด', { error: err.message, stack: err.stack });
     } finally {
+      // ★ ต้องปล่อย flag ทุกกรณี — ถ้าค้างเป็น true จะไม่มีลูปใหม่เกิดขึ้นอีกเลย
       this._loopRunning = false;
-      logger.info('[Loop] Continuous loop ended');
+      const ranMs = Date.now() - (this._loopStartedAt || Date.now());
+      logger.info('[Loop] Continuous loop ended', {
+        iterations: this._loopIteration, ranMinutes: Math.round(ranMs / 60_000),
+      });
     }
   }
 
+  /** สั่งให้ลูปหยุดที่รอบถัดไป (ใช้ตอน stop()/shutdown) */
+  requestLoopStop() {
+    this._loopStopRequested = true;
+  }
+
+  getLoopState() {
+    return {
+      running:   this._loopRunning,
+      iteration: this._loopIteration || 0,
+      startedAt: this._loopStartedAt ? new Date(this._loopStartedAt).toISOString() : null,
+      runningMinutes: this._loopStartedAt ? Math.round((Date.now() - this._loopStartedAt) / 60_000) : 0,
+      stopRequested: !!this._loopStopRequested,
+    };
+  }
+
+  /**
+   * ★ รอคิวว่าง — มีเพดานเวลา (เดิมรอตลอดกาล)
+   * @returns {{ok:boolean, waitedMs:number, reason?:string}}
+   */
   _waitForQueueEmpty() {
+    const maxWaitMs = C.SCHEDULER.QUEUE_WAIT_MAX_MS;
+    const startedAt = Date.now();
+
     return new Promise(resolve => {
       const check = () => {
-        const s = uploadQueue.getStatus();
-        if ((s.pending || 0) + (s.processing || 0) === 0) {
-          resolve();
-        } else {
-          logger.debug(`[Loop] Queue ยังมีงาน — pending:${s.pending} processing:${s.processing} — รออีก ${C.SCHEDULER.QUEUE_POLL_MS / 1000}s`);
-          setTimeout(check, C.SCHEDULER.QUEUE_POLL_MS);
+        if (this._loopStopRequested) {
+          return resolve({ ok: false, waitedMs: Date.now() - startedAt, reason: 'stop_requested' });
         }
+
+        const s = uploadQueue.getCounts();
+        const outstanding = (s.pending || 0) + (s.processing || 0);
+
+        if (outstanding === 0) {
+          return resolve({ ok: true, waitedMs: Date.now() - startedAt });
+        }
+
+        if (Date.now() - startedAt > maxWaitMs) {
+          return resolve({
+            ok: false,
+            waitedMs: Date.now() - startedAt,
+            reason: 'timeout',
+            pending: s.pending, processing: s.processing,
+          });
+        }
+
+        logger.debug(`[Loop] Queue ยังมีงาน — pending:${s.pending} processing:${s.processing} — รออีก ${C.SCHEDULER.QUEUE_POLL_MS / 1000}s`);
+        const t = setTimeout(check, C.SCHEDULER.QUEUE_POLL_MS);
+        if (t.unref) t.unref();
       };
       check();
     });

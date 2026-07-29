@@ -273,8 +273,8 @@ RISK_KEYWORDS = {
 
 | Domain | Events |
 |--------|--------|
-| upload | `upload:completed`, `upload:failed`, `upload:retry`, `upload:duplicate_detected` |
-| queue | `queue:drain`, `queue:progress`, `queue:auto_pause` |
+| upload | `upload:completed`, `upload:failed`, `upload:retry`, `upload:duplicate_detected`, `upload:video_deleted` |
+| queue | `queue:drain`, `queue:progress`, `queue:auto_pause`, `queue:auto_resume` |
 | scheduler | `scheduler:files_found`, `scheduler:check_start`, `scheduler:pause`, `scheduler:restart_watcher` |
 | tiktok | `tiktok:downloaded` |
 | auth | `auth:login`, `auth:logout` |
@@ -283,6 +283,90 @@ RISK_KEYWORDS = {
 | notification | `notification:send` |
 | dashboard | `dashboard:refresh` |
 | stats | `stats:increment` |
+| seo | `seo:validation_issue` |
+| engine | `engine:state_changed`, `engine:cycle_started`, `engine:cycle_completed`, `engine:degraded`, `engine:stuck`, `engine:blocked`, `engine:quota_wait` |
+
+### `stats:increment` — ชนิดที่รองรับ (payload.type)
+
+| type | ผลที่เกิด |
+|------|-----------|
+| `upload` | totalUploads, dailyStats, sourceStats, **uploadsByHour**, lastEvent |
+| `failure` | failedUploads, dailyStats.failures, lastEvent |
+| `transform` | transformStats.total เท่านั้น |
+| `transform_failed` | transformStats.failed เท่านั้น |
+
+**★ กฎ: มีแต่ `type: 'upload'` เท่านั้นที่เพิ่ม `uploadsByHour`**
+เดิมทุก event เพิ่ม uploadsByHour ทำให้กราฟ "ช่วงเวลาที่อัปโหลด" เพี้ยนจาก transform event
+
+---
+
+## ★ Reliability Layer (ต้องใช้ทุกครั้งที่เรียกออกนอกระบบ)
+
+### `src/utils/resilience.js`
+ทุก call ที่ออกไปข้างนอก (YouTube API, tikwm, ffmpeg) **ต้อง** ห่อด้วย `guarded()`:
+
+```javascript
+const { guarded } = require('../utils/resilience');
+
+await guarded('youtube:upload', () => api.upload(), {
+  attempts: 3,
+  timeoutMs: C.YOUTUBE.UPLOAD_TIMEOUT_MS,
+  onTimeout: () => stream.destroy(),        // ★ ต้อง abort งานจริง
+  isRetryable: (err) => ...,                // ★ ห้าม retry quota error
+});
+```
+
+Breaker ที่ลงทะเบียนไว้แล้ว: `youtube:upload`, `youtube:delete`, `youtube:channels`, `youtube:analytics`
+ดูสถานะได้ที่ `GET /api/health/metrics` → `circuits[]`
+
+### `src/utils/pathGuard.js`
+**ทุก filepath ที่มาจาก request body/query ต้องผ่าน `resolveSafe()`**
+ห้ามใช้ `fs.existsSync(req.body.filepath)` เป็นการตรวจสอบเพียงอย่างเดียว
+
+### `src/utils/diskGuard.js`
+เรียกก่องานที่เขียนดิสก์ (download / transform / compile): `assertSpace()` หรือ `check()`
+
+### `src/utils/store.js` — กฎการใช้
+| ใช้เมื่อ | เมธอด |
+|---------|-------|
+| อ่านแล้วจะแก้ข้อมูล | `load()` (deep clone) |
+| อ่านเฉยๆ ใน hot path | `loadRef()` (**ห้าม mutate**) |
+| **แก้ข้อมูล** | `safeUpdate()` ← ใช้ตัวนี้เสมอ |
+| ปิดระบบ | `flushAll()` |
+
+**★ ห้ามใช้ `load()` → แก้ → `save()`** เพราะระหว่างนั้นมี write อื่นแทรกได้ → ข้อมูลหาย
+
+---
+
+## 🛡️ Security
+
+- **`DASHBOARD_PASSWORD`** ไม่ได้ตั้ง → route ที่ทำลายข้อมูลได้ถูกจำกัดเฉพาะ localhost
+  (ผ่าน `requireAuthForDestructive` — ใช้กับ manage/delete, accounts CRUD, quota reset, history clear)
+- ตั้งแล้ว → `authMiddleware` บังคับ login ทุก `/api/*` (ยกเว้น `/api/health/live|ready`, `/api/security/*`)
+- Rate limit 600 req/นาที/IP, body limit 4MB, security headers
+
+---
+
+## 🧪 Regression Test
+
+```bash
+npm run smoke     # 37 เทสต์ครอบคลุมบั๊กที่แก้ไปแล้วทุกตัว
+```
+
+**★ เพิ่มเทสต์ใน `scripts/smoke-test.js` ทุกครั้งที่แก้บั๊ก stability**
+
+---
+
+## 🚀 การรัน
+
+```bash
+npm start              # รันตรง (ถ้า crash = ดับ)
+npm run start:supervised   # ★ แนะนำ — restart อัตโนมัติเมื่อ crash + crash-loop detection
+```
+
+**★ สำคัญ:** ระบบจะ `process.exit(1)` เมื่อเจอ `uncaughtException`
+(เดิม log แล้ววิ่งต่อด้วย state ที่พัง → เขียนข้อมูลผิดเงียบๆ)
+จึง **ต้อง** รันใต้ supervisor หรือ process manager
 
 ---
 

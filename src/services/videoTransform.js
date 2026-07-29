@@ -23,6 +23,9 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const logger = require('../utils/logger');
 const { settings } = require('../utils/store');
+const C = require('../config/constants');
+const diskGuard = require('../utils/diskGuard');
+const { Semaphore } = require('../utils/resilience');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -34,6 +37,33 @@ const TEMP_DIR = path.join(__dirname, '../../downloads/temp');
 [ASSETS_DIR, TRANSFORM_DIR, TEMP_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
+
+/**
+ * ★ แปลง frame rate ของ ffprobe ("30000/1001") เป็นตัวเลข — แทน eval()
+ * รับค่าแปลกๆ ได้ทุกแบบโดยไม่ crash และไม่รันโค้ด
+ */
+function parseFrameRate(raw, fallback = 30) {
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
+  if (typeof raw !== 'string') return fallback;
+
+  const m = raw.trim().match(/^(\d+(?:\.\d+)?)\s*(?:\/\s*(\d+(?:\.\d+)?))?$/);
+  if (!m) return fallback;
+
+  const num = parseFloat(m[1]);
+  const den = m[2] !== undefined ? parseFloat(m[2]) : 1;
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) return fallback;
+
+  const fps = num / den;
+  // ค่าที่สมเหตุสมผลเท่านั้น (ffprobe คืน 0/0 ได้เมื่ออ่านไม่ออก)
+  return fps > 0 && fps <= 480 ? Math.round(fps * 1000) / 1000 : fallback;
+}
+
+/** ★ clamp ค่า config ตัวเลข — กัน settings ที่ผิดทำให้ ffmpeg filter พัง (เช่น speed=0) */
+function clampNum(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
 
 // ─── Default Config ─────────────────────────────────────────────────
 const DEFAULT_CONFIG = {
@@ -133,7 +163,96 @@ class VideoTransformService extends EventEmitter {
     super();
     this._processing = false;
     this._queue = [];
-    this._stats = { processed: 0, failed: 0, totalTimeMs: 0 };
+    this._stats = { processed: 0, failed: 0, totalTimeMs: 0, timeouts: 0, killed: 0 };
+
+    // ★ จำกัดงาน ffmpeg พร้อมกัน — เดิมไม่จำกัด รันหลายตัวพร้อมกันทำให้เครื่องค้าง
+    this._sem = new Semaphore(C.VIDEO_TRANSFORM.MAX_CONCURRENT, 'ffmpeg');
+
+    // ★ ทะเบียน ffmpeg process ที่กำลังวิ่ง — ใช้ kill ตอน timeout / shutdown
+    //   เดิมไม่มี → ffmpeg ค้างเป็น zombie กิน CPU ต่อไปเรื่อยๆ
+    this._running = new Map(); // id → { command, startedAt, label }
+    this._runId = 0;
+  }
+
+  // ── Process registry ──────────────────────────────────────────────
+
+  _track(command, label) {
+    const id = ++this._runId;
+    this._running.set(id, { command, startedAt: Date.now(), label });
+    return id;
+  }
+
+  _untrack(id) { this._running.delete(id); }
+
+  _kill(id, reason = 'timeout') {
+    const entry = this._running.get(id);
+    if (!entry) return false;
+    try {
+      entry.command.kill('SIGKILL');
+      this._stats.killed++;
+      logger.warn('[VideoTransform] ยุติ ffmpeg', { label: entry.label, reason,
+        ranMs: Date.now() - entry.startedAt });
+    } catch (err) {
+      logger.error('[VideoTransform] kill ffmpeg ไม่สำเร็จ', { error: err.message });
+    }
+    this._running.delete(id);
+    return true;
+  }
+
+  /** ★ ฆ่างาน ffmpeg ทั้งหมด — เรียกตอน graceful shutdown */
+  killAll(reason = 'shutdown') {
+    const ids = Array.from(this._running.keys());
+    for (const id of ids) this._kill(id, reason);
+    return { killed: ids.length };
+  }
+
+  getRunning() {
+    return Array.from(this._running.entries()).map(([id, e]) => ({
+      id, label: e.label, runningMs: Date.now() - e.startedAt,
+    }));
+  }
+
+  /**
+   * ★ ห่อ ffmpeg command ด้วย timeout ที่ kill process จริง
+   * เดิม ffmpeg ไม่มี timeout เลย — งานค้าง = request ค้าง = queue slot ค้างตลอดไป
+   */
+  _runFfmpeg(command, { label, timeoutMs, onEnd }) {
+    return new Promise((resolve, reject) => {
+      const id = this._track(command, label);
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this._stats.timeouts++;
+        this._kill(id, 'timeout');
+        reject(new Error(`ffmpeg ใช้เวลาเกิน ${Math.round(timeoutMs / 1000)}s (${label}) — ยกเลิก`));
+      }, timeoutMs);
+      if (timer.unref) timer.unref();
+
+      const finish = (err, result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this._untrack(id);
+        if (err) reject(err); else resolve(result);
+      };
+
+      command
+        .on('start', (cmd) => {
+          logger.debug('[VideoTransform] ffmpeg start', { label, cmd: String(cmd).substring(0, 220) });
+        })
+        .on('stderr', (line) => {
+          // เก็บ stderr บรรทัดล่าสุดไว้ประกอบ error message (ffmpeg error จริงอยู่ที่นี่)
+          this._lastStderr = String(line).slice(0, 300);
+        })
+        .on('end', () => { if (onEnd) { try { onEnd(); } catch (_) {} } finish(null, true); })
+        .on('error', (err) => {
+          const detail = this._lastStderr ? ` — ${this._lastStderr}` : '';
+          finish(new Error(`${err.message}${detail}`));
+        })
+        .run();
+    });
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -143,12 +262,42 @@ class VideoTransformService extends EventEmitter {
   /**
    * Transform a single video with configured options.
    * Returns path to transformed video file.
+   *
+   * ★ ทุกงานผ่าน semaphore (ffmpeg กิน CPU หนัก — รันพร้อมกันหลายตัวทำให้ทั้งเครื่องช้า)
+   * ★ เช็คขนาด input + พื้นที่ดิสก์ก่อนเริ่ม
    */
   async transformSingle(inputPath, options = {}) {
+    return this._sem.run(() => this._transformSingleGuarded(inputPath, options));
+  }
+
+  async _transformSingleGuarded(inputPath, options = {}) {
     const config = this._getConfig(options);
     if (!config.enabled) {
       logger.info('[VideoTransform] Transform disabled, returning original');
       return { filepath: inputPath, transformed: false };
+    }
+
+    // ★ Guard 1: ไฟล์ใหญ่เกินไป → ข้าม transform ดีกว่ากิน CPU เป็นชั่วโมง
+    try {
+      const inStat = fs.statSync(inputPath);
+      if (inStat.size > C.VIDEO_TRANSFORM.MAX_INPUT_SIZE_BYTES) {
+        logger.warn('[VideoTransform] ไฟล์ใหญ่เกินกำหนด — ข้าม transform', {
+          input: path.basename(inputPath),
+          sizeMB: Math.round(inStat.size / 1048576),
+          limitMB: Math.round(C.VIDEO_TRANSFORM.MAX_INPUT_SIZE_BYTES / 1048576),
+        });
+        return { filepath: inputPath, transformed: false, skipped: 'file_too_large' };
+      }
+    } catch (err) {
+      return { filepath: inputPath, transformed: false, error: `อ่านไฟล์ไม่ได้: ${err.message}` };
+    }
+
+    // ★ Guard 2: พื้นที่ดิสก์ — transform เขียน output ใหญ่กว่า input ได้ถึง 2.5 เท่า
+    try {
+      diskGuard.assertSpaceForTransform(inputPath);
+    } catch (err) {
+      logger.error('[VideoTransform] พื้นที่ไม่พอ — ข้าม transform', { error: err.message });
+      return { filepath: inputPath, transformed: false, error: err.message };
     }
 
     const startTime = Date.now();
@@ -209,16 +358,28 @@ class VideoTransformService extends EventEmitter {
    * Merges N videos into one long-form video with transitions.
    */
   async createCompilation(inputPaths, options = {}) {
+    return this._sem.run(() => this._createCompilationGuarded(inputPaths, options));
+  }
+
+  async _createCompilationGuarded(inputPaths, options = {}) {
     const config = this._getConfig(options);
     const compilationConfig = { ...DEFAULT_CONFIG.compilation, ...config.compilation };
-    
-    if (inputPaths.length < 2) {
+
+    if (!Array.isArray(inputPaths) || inputPaths.length < 2) {
       throw new Error('Compilation ต้องมีอย่างน้อย 2 คลิป');
     }
+
+    // ★ พื้นที่ดิสก์: compilation เขียน normalized clip ทุกไฟล์ + output อีกก้อน
+    const totalInput = inputPaths.reduce((sum, p) => {
+      try { return sum + fs.statSync(p).size; } catch (_) { return sum; }
+    }, 0);
+    diskGuard.assertSpace(Math.round(totalInput * 3), { label: 'compilation' });
 
     const startTime = Date.now();
     const outputFilename = `compilation_${Date.now()}.mp4`;
     const outputPath = path.join(TRANSFORM_DIR, outputFilename);
+    // ★ ติดตาม temp file ทุกไฟล์ — เดิมลบเฉพาะตอนสำเร็จ ทำให้ล้มเหลว = ขยะค้างดิสก์
+    const tempFiles = [];
 
     try {
       logger.info('[VideoTransform] Creating compilation', { 
@@ -240,15 +401,17 @@ class VideoTransformService extends EventEmitter {
       const normalizedPaths = [];
       for (let i = 0; i < validPaths.length; i++) {
         const normPath = path.join(TEMP_DIR, `norm_${i}_${Date.now()}.mp4`);
+        tempFiles.push(normPath);   // ★ ลงทะเบียนก่อนสร้าง — ล้มกลางทางก็ยังลบได้
         await this._normalizeClip(validPaths[i], normPath, config);
         normalizedPaths.push(normPath);
+        this.emit('compilation:progress', {
+          phase: 'normalize',
+          percent: Math.round(((i + 1) / validPaths.length) * 50),
+        });
       }
 
       // Step 2: Concatenate with transitions
       await this._concatenateWithTransitions(normalizedPaths, outputPath, compilationConfig, config);
-
-      // Step 3: Cleanup temp files
-      normalizedPaths.forEach(p => { try { fs.unlinkSync(p); } catch {} });
 
       const duration = Date.now() - startTime;
       const outputStats = fs.statSync(outputPath);
@@ -280,8 +443,15 @@ class VideoTransformService extends EventEmitter {
     } catch (error) {
       logger.error('[VideoTransform] Compilation failed', { error: error.message });
       this.emit('compilation:failed', { error: error.message });
-      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+      try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (_) {}
       throw error;
+    } finally {
+      // ★ ลบ normalized clip ทุกกรณี (สำเร็จ/ล้มเหลว/timeout)
+      let leaked = 0;
+      for (const f of tempFiles) {
+        try { if (fs.existsSync(f)) { fs.unlinkSync(f); leaked++; } } catch (_) {}
+      }
+      if (leaked > 0) logger.debug('[VideoTransform] ลบไฟล์ชั่วคราว', { count: leaked });
     }
   }
 
@@ -328,9 +498,48 @@ class VideoTransformService extends EventEmitter {
   // ════════════════════════════════════════════════════════════════════
 
   _getConfig(overrides = {}) {
-    const userConfig = settings.load();
+    const userConfig = settings.loadRef();
     const transformConfig = userConfig.videoTransform || {};
-    return this._deepMerge(DEFAULT_CONFIG, transformConfig, overrides);
+    const merged = this._deepMerge(DEFAULT_CONFIG, transformConfig, overrides);
+    return this._sanitizeConfig(merged);
+  }
+
+  /**
+   * ★ Clamp ค่าตัวเลขให้อยู่ในช่วงที่ ffmpeg รับได้
+   * เดิม settings.json ยอมรับค่าอะไรก็ได้ → speed=0 ทำให้ filter เป็น
+   *   setpts=Infinity*PTS / atempo=0 → ffmpeg พังทุกครั้งแบบหาสาเหตุยาก
+   */
+  _sanitizeConfig(cfg) {
+    const v = cfg.visual || {};
+    cfg.visual = {
+      ...v,
+      // atempo รับ 0.5–100 ส่วน setpts ต้องไม่เป็น 0
+      speed:      clampNum(v.speed,      0.5,  2.0, 1.0),
+      zoom:       clampNum(v.zoom,       1.0,  2.0, 1.0),
+      brightness: clampNum(v.brightness, -1,   1,   0),
+      contrast:   clampNum(v.contrast,   0,    4,   1),
+      saturation: clampNum(v.saturation, 0,    3,   1),
+    };
+
+    const a = cfg.audio || {};
+    cfg.audio = {
+      ...a,
+      originalVolume:  clampNum(a.originalVolume,  0, 4,  1),
+      fadeInDuration:  clampNum(a.fadeInDuration,  0, 10, 0),
+      fadeOutDuration: clampNum(a.fadeOutDuration, 0, 10, 0),
+    };
+
+    const o = cfg.output || {};
+    cfg.output = {
+      ...o,
+      fps: Math.round(clampNum(o.fps, 15, 60, 30)),
+      resolution: RESOLUTIONS[o.resolution] ? o.resolution : '1080p',
+    };
+
+    if (cfg.intro)  cfg.intro.duration  = clampNum(cfg.intro.duration,  0, 15, 3);
+    if (cfg.outro)  cfg.outro.duration  = clampNum(cfg.outro.duration,  0, 15, 3);
+
+    return cfg;
   }
 
   /**
@@ -338,16 +547,36 @@ class VideoTransformService extends EventEmitter {
    */
   _probeVideo(filepath) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`ffprobe ค้างเกิน ${C.VIDEO_TRANSFORM.PROBE_TIMEOUT_MS / 1000}s — ไฟล์อาจเสีย`));
+      }, C.VIDEO_TRANSFORM.PROBE_TIMEOUT_MS);
+      if (timer.unref) timer.unref();
+
       ffmpeg.ffprobe(filepath, (err, metadata) => {
-        if (err) return reject(err);
-        const video = metadata.streams.find(s => s.codec_type === 'video');
-        const audio = metadata.streams.find(s => s.codec_type === 'audio');
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+
+        if (err) return reject(new Error(`อ่านข้อมูลวิดีโอไม่ได้: ${err.message}`));
+        if (!metadata || !metadata.format) return reject(new Error('ไฟล์วิดีโอไม่มี metadata — อาจเสียหาย'));
+
+        const streams = Array.isArray(metadata.streams) ? metadata.streams : [];
+        const video = streams.find(s => s.codec_type === 'video');
+        const audio = streams.find(s => s.codec_type === 'audio');
+
+        if (!video) return reject(new Error('ไฟล์นี้ไม่มี video stream'));
+
         resolve({
           duration: parseFloat(metadata.format.duration) || 0,
-          width: video ? video.width : 0,
-          height: video ? video.height : 0,
-          fps: video ? eval(video.r_frame_rate) : 30,
+          width:  video.width  || 0,
+          height: video.height || 0,
+          // ★ เดิมใช้ eval() กับสตริงจาก ffprobe ของไฟล์ที่โหลดมาจากเน็ต — code injection
+          fps: parseFrameRate(video.r_frame_rate ?? video.avg_frame_rate),
           hasAudio: !!audio,
+          codec: video.codec_name || 'unknown',
           bitrate: parseInt(metadata.format.bit_rate) || 0,
           size: parseInt(metadata.format.size) || 0,
         });
@@ -391,15 +620,18 @@ class VideoTransformService extends EventEmitter {
 
       command
         .output(outputPath)
-        .on('start', (cmd) => {
-          logger.debug('[VideoTransform] ffmpeg command', { cmd: cmd.substring(0, 200) });
-        })
         .on('progress', (progress) => {
-          this.emit('transform:progress', { percent: progress.percent || 0 });
-        })
-        .on('end', resolve)
-        .on('error', reject)
-        .run();
+          this.emit('transform:progress', {
+            percent: Math.min(100, Math.max(0, progress.percent || 0)),
+            input: path.basename(inputPath),
+          });
+        });
+
+      // ★ ห่อด้วย timeout ที่ kill ffmpeg จริง
+      this._runFfmpeg(command, {
+        label: `transform:${path.basename(inputPath)}`,
+        timeoutMs: C.VIDEO_TRANSFORM.PROCESS_TIMEOUT_MS,
+      }).then(resolve, reject);
     });
   }
 
@@ -556,65 +788,68 @@ class VideoTransformService extends EventEmitter {
    * Normalize a clip to consistent format for compilation
    */
   _normalizeClip(inputPath, outputPath, config) {
-    return new Promise((resolve, reject) => {
-      const resolution = RESOLUTIONS[config.output.resolution] || RESOLUTIONS['1080p'];
-      
-      ffmpeg(inputPath)
-        .outputOptions([
-          '-c:v libx264',
-          '-preset fast',
-          '-crf 22',
-          `-r ${config.output.fps}`,
-          '-c:a aac',
-          '-ar 44100',
-          '-ac 2',
-          `-b:a ${config.output.audioBitrate}`,
-          '-y',
-        ])
-        .size(`${resolution.width}x${resolution.height}`)
-        .autopad()
-        .output(outputPath)
-        .on('end', resolve)
-        .on('error', reject)
-        .run();
+    const resolution = RESOLUTIONS[config.output.resolution] || RESOLUTIONS['1080p'];
+
+    const command = ffmpeg(inputPath)
+      .outputOptions([
+        '-c:v libx264',
+        '-preset fast',
+        '-crf 22',
+        `-r ${config.output.fps}`,
+        '-c:a aac',
+        '-ar 44100',
+        '-ac 2',
+        `-b:a ${config.output.audioBitrate}`,
+        '-y',
+      ])
+      .size(`${resolution.width}x${resolution.height}`)
+      .autopad()
+      .output(outputPath);
+
+    return this._runFfmpeg(command, {
+      label: `normalize:${path.basename(inputPath)}`,
+      timeoutMs: C.VIDEO_TRANSFORM.PROCESS_TIMEOUT_MS,
     });
   }
 
   /**
    * Concatenate normalized clips with crossfade transitions
    */
-  _concatenateWithTransitions(inputPaths, outputPath, compilationConfig, config) {
-    return new Promise((resolve, reject) => {
-      // For simplicity + reliability, use concat demuxer (no transitions)
-      // which is much faster and more stable than complex filter chains
-      const listFile = path.join(TEMP_DIR, `concat_${Date.now()}.txt`);
-      const entries = inputPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`);
-      fs.writeFileSync(listFile, entries.join('\n'));
+  async _concatenateWithTransitions(inputPaths, outputPath, compilationConfig, config) {
+    // For simplicity + reliability, use concat demuxer (no transitions)
+    // which is much faster and more stable than complex filter chains
+    const listFile = path.join(TEMP_DIR, `concat_${Date.now()}.txt`);
+    const entries = inputPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`);
+    fs.writeFileSync(listFile, entries.join('\n'));
 
-      ffmpeg()
-        .input(listFile)
-        .inputOptions(['-f concat', '-safe 0'])
-        .outputOptions([
-          '-c:v libx264',
-          '-preset fast',
-          '-crf 20',
-          `-b:v ${config.output.videoBitrate}`,
-          '-c:a aac',
-          `-b:a ${config.output.audioBitrate}`,
-          '-movflags +faststart',
-          '-y',
-        ])
-        .output(outputPath)
-        .on('end', () => {
-          try { fs.unlinkSync(listFile); } catch {}
-          resolve();
-        })
-        .on('error', (err) => {
-          try { fs.unlinkSync(listFile); } catch {}
-          reject(err);
-        })
-        .run();
-    });
+    const command = ffmpeg()
+      .input(listFile)
+      .inputOptions(['-f concat', '-safe 0'])
+      .outputOptions([
+        '-c:v libx264',
+        '-preset fast',
+        '-crf 20',
+        `-b:v ${config.output.videoBitrate}`,
+        '-c:a aac',
+        `-b:a ${config.output.audioBitrate}`,
+        '-movflags +faststart',
+        '-y',
+      ])
+      .output(outputPath)
+      .on('progress', (p) => {
+        this.emit('compilation:progress', { percent: Math.min(100, Math.max(0, p.percent || 0)) });
+      });
+
+    try {
+      // ★ compilation ใช้เวลานานกว่า single — ใช้ timeout แยก
+      await this._runFfmpeg(command, {
+        label: `concat:${inputPaths.length}clips`,
+        timeoutMs: C.VIDEO_TRANSFORM.COMPILE_TIMEOUT_MS,
+      });
+    } finally {
+      // ★ ลบ list file ทุกกรณี รวม timeout (เดิม timeout ไม่ลบเพราะไม่มี handler)
+      try { fs.unlinkSync(listFile); } catch (_) {}
+    }
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -648,4 +883,10 @@ class VideoTransformService extends EventEmitter {
   }
 }
 
-module.exports = new VideoTransformService();
+const service = new VideoTransformService();
+
+// ★ expose helper สำหรับ test (ไม่ใช่ public API)
+service._parseFrameRate = parseFrameRate;
+service._clampNum = clampNum;
+
+module.exports = service;

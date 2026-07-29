@@ -25,6 +25,8 @@ class Orchestrator {
     // Debounce queue progress broadcasts
     this._queueProgressDebounce = null;
     this._pendingQueueProgress = null;
+    // ★ true = คิวถูก pause โดยระบบ (health critical) ไม่ใช่โดยผู้ใช้
+    this._autoPaused = false;
   }
 
   // เรียกครั้งเดียวจาก server.js หลัง WebSocket พร้อม
@@ -69,8 +71,26 @@ class Orchestrator {
 
     // Listen for auto-pause command from rules
     eventBus.on('queue:auto_pause', (payload) => {
+      // ★ จำว่าเป็นการ pause อัตโนมัติ — เพื่อไม่ resume ทับการ pause ที่ user สั่งเอง
+      if (!uploadQueue.paused) this._autoPaused = true;
       uploadQueue.pause();
       logger.warn('[Orchestrator] Queue auto-paused', { reason: payload.reason });
+    });
+
+    eventBus.on('queue:auto_resume', (payload) => {
+      if (!this._autoPaused) {
+        logger.info('[Orchestrator] ไม่ resume — คิวถูก pause โดยผู้ใช้');
+        return;
+      }
+      this._autoPaused = false;
+      uploadQueue.resume();
+      logger.info('[Orchestrator] Queue auto-resumed', { reason: payload.reason });
+      eventBus.dispatch('notification:send', {
+        level: 'success',
+        title: 'ระบบกลับมาปกติ',
+        message: 'คิวอัปโหลดทำงานต่ออัตโนมัติ',
+        source: 'health',
+      });
     });
   }
 
@@ -180,37 +200,51 @@ class Orchestrator {
   // ==================== WIRE: Stats → Store ====================
   _wireStats() {
     eventBus.on('stats:increment', (payload) => {
-      const allStats = stats.load();
-      const today = new Date().toISOString().split('T')[0];
-      const hour = new Date().getHours().toString();
+      // ★ safeUpdate — serialized read-modify-write กัน lost update
+      //   เดิมใช้ load()+save() ตรง ทำให้ upload ที่เกิดพร้อมกันนับหาย
+      stats.safeUpdate((allStats) => {
+        const today = new Date().toISOString().split('T')[0];
+        const hour  = new Date().getHours().toString();
 
-      if (!allStats.dailyStats) allStats.dailyStats = {};
-      if (!allStats.dailyStats[today]) allStats.dailyStats[today] = { uploads: 0, failures: 0, size: 0, tiktok: 0 };
-      if (!allStats.uploadsByHour) allStats.uploadsByHour = {};
-      if (!allStats.sourceStats) allStats.sourceStats = { tiktok: 0, folder: 0, drop: 0, tiktok_watchlist: 0 };
+        if (!allStats.dailyStats) allStats.dailyStats = {};
+        if (!allStats.dailyStats[today]) allStats.dailyStats[today] = { uploads: 0, failures: 0, size: 0, tiktok: 0 };
+        if (!allStats.uploadsByHour) allStats.uploadsByHour = {};
+        if (!allStats.sourceStats) allStats.sourceStats = { tiktok: 0, folder: 0, drop: 0, tiktok_watchlist: 0 };
+        if (!allStats.transformStats) allStats.transformStats = { total: 0, failed: 0 };
 
-      if (payload.type === 'upload') {
-        allStats.totalUploads = (allStats.totalUploads || 0) + 1;
-        allStats.totalSize = (allStats.totalSize || 0) + (payload.size || 0);
-        allStats.dailyStats[today].uploads++;
-        allStats.dailyStats[today].size += (payload.size || 0);
-        // Track by source
-        if (payload.source && allStats.sourceStats[payload.source] !== undefined) {
-          allStats.sourceStats[payload.source]++;
+        if (payload.type === 'upload') {
+          allStats.totalUploads = (allStats.totalUploads || 0) + 1;
+          allStats.totalSize = (allStats.totalSize || 0) + (payload.size || 0);
+          allStats.dailyStats[today].uploads++;
+          allStats.dailyStats[today].size += (payload.size || 0);
+          if (payload.source && allStats.sourceStats[payload.source] !== undefined) {
+            allStats.sourceStats[payload.source]++;
+          }
+          if (payload.source === 'tiktok' || payload.source === 'tiktok_watchlist') {
+            allStats.dailyStats[today].tiktok = (allStats.dailyStats[today].tiktok || 0) + 1;
+          }
+          // ★ uploadsByHour นับเฉพาะ upload จริง — เดิมนับทุก event รวม transform
+          //   ทำให้กราฟ "ช่วงเวลาที่อัปโหลด" บนหน้า dashboard เพี้ยน
+          allStats.uploadsByHour[hour] = (allStats.uploadsByHour[hour] || 0) + 1;
+
+        } else if (payload.type === 'failure') {
+          allStats.failedUploads = (allStats.failedUploads || 0) + 1;
+          allStats.dailyStats[today].failures++;
+
+        } else if (payload.type === 'transform') {
+          allStats.transformStats.total++;
+
+        } else if (payload.type === 'transform_failed') {
+          allStats.transformStats.failed++;
         }
-        // Track TikTok daily count
-        if (payload.source === 'tiktok' || payload.source === 'tiktok_watchlist') {
-          allStats.dailyStats[today].tiktok = (allStats.dailyStats[today].tiktok || 0) + 1;
+
+        // lastEvent เฉพาะ event ที่เกี่ยวกับ upload — ไม่ให้ transform กลบ
+        if (payload.type === 'upload' || payload.type === 'failure') {
+          allStats.lastEvent = { type: payload.type, filename: payload.filename, at: new Date().toISOString() };
         }
-      } else if (payload.type === 'failure') {
-        allStats.failedUploads = (allStats.failedUploads || 0) + 1;
-        allStats.dailyStats[today].failures++;
-      }
 
-      allStats.uploadsByHour[hour] = (allStats.uploadsByHour[hour] || 0) + 1;
-      allStats.lastEvent = { type: payload.type, filename: payload.filename, at: new Date().toISOString() };
-
-      stats.save(allStats);
+        return allStats;
+      });
     });
   }
 
@@ -262,6 +296,7 @@ class Orchestrator {
       if (this.broadcast) {
         this.broadcast('transform:failed', data);
       }
+      eventBus.dispatch('stats:increment', { type: 'transform_failed', filename: data.input });
     });
 
     videoTransform.on('compilation:start', (data) => {
@@ -305,6 +340,62 @@ class Orchestrator {
 
   onDuplicateDetected(data) {
     eventBus.dispatch('upload:duplicate_detected', data);
+  }
+
+  onVideoDeleted(data) {
+    eventBus.dispatch('upload:video_deleted', data);
+  }
+
+  // ════════════════════════ ENGINE EVENTS ════════════════════════
+
+  onEngineStateChanged(data) {
+    eventBus.dispatch('engine:state_changed', data);
+  }
+
+  onEngineCycleStarted(data) {
+    eventBus.dispatch('engine:cycle_started', data);
+  }
+
+  onEngineCycleCompleted(data) {
+    eventBus.dispatch('engine:cycle_completed', data);
+  }
+
+  onEngineDegraded(data) {
+    eventBus.dispatch('engine:degraded', data);
+  }
+
+  onEngineStuck(data) {
+    eventBus.dispatch('engine:stuck', data);
+  }
+
+  onEngineBlocked(data) {
+    eventBus.dispatch('engine:blocked', data);
+  }
+
+  onEngineQuotaWait(data) {
+    eventBus.dispatch('engine:quota_wait', data);
+  }
+
+  /**
+   * ★ Health status เปลี่ยน → EventBus Rule 9 (critical → auto-pause queue)
+   * เดิม rule นี้เป็น dead code เพราะไม่มีใคร dispatch event นี้เลย
+   * ตอนนี้ server.js watchdog เรียกทุก 60 วิเมื่อสถานะเปลี่ยน
+   */
+  onHealthStatusChanged(overall, previous, health) {
+    logger.info('[Orchestrator] สถานะระบบเปลี่ยน', { from: previous, to: overall });
+    eventBus.dispatch('health:status_changed', {
+      overall,
+      previous,
+      memory: health?.memory,
+      disk:   health?.disk,
+      queue:  health?.queue,
+      checks: health?.checks,
+    });
+
+    // ★ กลับมาปกติ → resume queue ที่ถูก auto-pause ไว้
+    if (overall !== 'critical' && previous === 'critical') {
+      eventBus.dispatch('queue:auto_resume', { reason: 'health_recovered' });
+    }
   }
 
   getEventHistory(limit) {

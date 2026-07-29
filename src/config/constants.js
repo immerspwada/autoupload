@@ -28,6 +28,8 @@ module.exports = {
     DELAY_BETWEEN_MS:  parseInt(process.env.QUEUE_DELAY_BETWEEN) || 2000,
     TASK_TIMEOUT_MS:   parseInt(process.env.QUEUE_TASK_TIMEOUT)  || 15 * 60 * 1000,
     MAX_COMPLETED_ITEMS: parseInt(process.env.QUEUE_MAX_ITEMS)  || 50,
+    // จำนวน item สูงสุดที่ส่งใน getStatus() — กัน serialize คิวยาวทุก progress event
+    MAX_STATUS_ITEMS:  parseInt(process.env.QUEUE_MAX_STATUS_ITEMS) || 100,
   },
 
   // ── Scheduler ─────────────────────────────────────────────────────
@@ -37,6 +39,12 @@ module.exports = {
     LOOP_COOLDOWN_MS: parseInt(process.env.SCHEDULER_COOLDOWN_MS) || 5 * 60 * 1000,
     // Poll interval รอ queue ว่าง (10 วินาที)
     QUEUE_POLL_MS: parseInt(process.env.SCHEDULER_QUEUE_POLL_MS) || 10 * 1000,
+    // ★ เพดานเวลารอคิวว่าง (45 นาที) — เดิมรอตลอดกาล งานติด 1 ชิ้น = ลูปตายถาวร
+    QUEUE_WAIT_MAX_MS: parseInt(process.env.SCHEDULER_QUEUE_WAIT_MAX) || 45 * 60 * 1000,
+    // ★ เพดานจำนวนรอบต่อการเริ่มลูป 1 ครั้ง — รีสตาร์ทเพื่อล้าง state
+    LOOP_MAX_ITERATIONS: parseInt(process.env.SCHEDULER_LOOP_MAX_ITER) || 500,
+    // ★ ล้มเหลวติดกันกี่รอบถึงหยุดลูป
+    LOOP_MAX_CONSECUTIVE_ERRORS: parseInt(process.env.SCHEDULER_LOOP_MAX_ERRORS) || 5,
     // Delay หลัง file watcher ตรวจพบไฟล์ใหม่
     WATCHER_DEBOUNCE_MS: parseInt(process.env.SCHEDULER_WATCHER_DEBOUNCE) || 3000,
   },
@@ -49,8 +57,17 @@ module.exports = {
     MAX_SEARCH_PAGES: parseInt(process.env.TIKWM_MAX_PAGES) || 6,
     // Delay ระหว่าง keyword batches
     BATCH_DELAY_MS: parseInt(process.env.TIKWM_BATCH_DELAY) || 500,
-    // Download timeout per file (60 วินาที)
+    // Download inactivity timeout per file (60 วินาที)
     DOWNLOAD_TIMEOUT_MS: parseInt(process.env.TIKWM_DL_TIMEOUT) || 60 * 1000,
+    // ★ Total-duration timeout — กัน server ที่ส่งข้อมูลทีละหยด (5 นาที)
+    DOWNLOAD_TOTAL_TIMEOUT_MS: parseInt(process.env.TIKWM_DL_TOTAL_TIMEOUT) || 5 * 60 * 1000,
+    // ★ ขนาดไฟล์สูงสุดที่ยอมดาวน์โหลด (300MB)
+    MAX_DOWNLOAD_BYTES: parseInt(process.env.TIKWM_MAX_DL_BYTES) || 300 * 1024 * 1024,
+    // ★ timeout สำหรับ API call (idle / total)
+    JSON_IDLE_TIMEOUT_MS:  parseInt(process.env.TIKWM_JSON_IDLE)  || 8 * 1000,
+    JSON_TOTAL_TIMEOUT_MS: parseInt(process.env.TIKWM_JSON_TOTAL) || 25 * 1000,
+    TEXT_IDLE_TIMEOUT_MS:  parseInt(process.env.TIKWM_TEXT_IDLE)  || 15 * 1000,
+    TEXT_TOTAL_TIMEOUT_MS: parseInt(process.env.TIKWM_TEXT_TOTAL) || 30 * 1000,
     // Max concurrent keyword searches
     SEARCH_CONCURRENCY: parseInt(process.env.TIKWM_CONCURRENCY) || 3,
     // Delay between batch upload items
@@ -67,6 +84,10 @@ module.exports = {
     STATUS_BROADCAST_MS: parseInt(process.env.HEALTH_STATUS_INTERVAL) || 30 * 1000,
     // Hash file read: first 1MB only for speed
     HASH_READ_BYTES: parseInt(process.env.HEALTH_HASH_BYTES) || 1 * 1024 * 1024,
+    // ★ Watchdog — เช็คสถานะระบบเพื่อ dispatch health:status_changed (60 วินาที)
+    WATCHDOG_INTERVAL_MS: parseInt(process.env.HEALTH_WATCHDOG_INTERVAL) || 60 * 1000,
+    // เพดานจำนวน hash ใน hashes.json (กันไฟล์โตไม่จำกัด)
+    MAX_HASH_ENTRIES: parseInt(process.env.HEALTH_MAX_HASHES) || 20000,
   },
 
   // ── Activity Log ──────────────────────────────────────────────────
@@ -92,6 +113,8 @@ module.exports = {
     DL_BACKOFF_MAX_MS: parseInt(process.env.WATCHLIST_DL_BACKOFF_MAX) || 5 * 60 * 1000,
     // Session seen IDs max size per keyword
     SEEN_IDS_MAX: parseInt(process.env.WATCHLIST_SEEN_MAX) || 500,
+    // ★ จำนวน keyword ที่ track ใน memory ได้สูงสุด (trending fallback สร้างคีย์ใหม่ทุกรอบ)
+    MAX_TRACKED_KEYWORDS: parseInt(process.env.WATCHLIST_MAX_TRACKED) || 200,
   },
 
   // ── QuotaRotator ──────────────────────────────────────────────────
@@ -124,6 +147,12 @@ module.exports = {
     MAX_INPUT_SIZE_BYTES: parseInt(process.env.VT_MAX_SIZE) || 500 * 1024 * 1024,
     // Cleanup transformed files older than this (2 hours)
     TEMP_MAX_AGE_MS: parseInt(process.env.VT_TEMP_AGE) || 2 * 60 * 60 * 1000,
+    // งาน ffmpeg ที่ทำพร้อมกันได้สูงสุด (ffmpeg กิน CPU หนัก)
+    MAX_CONCURRENT: parseInt(process.env.VT_CONCURRENCY) || 1,
+    // timeout สำหรับ compilation (ยาวกว่า single เพราะหลายคลิป)
+    COMPILE_TIMEOUT_MS: parseInt(process.env.VT_COMPILE_TIMEOUT) || 15 * 60 * 1000,
+    // timeout ffprobe
+    PROBE_TIMEOUT_MS: parseInt(process.env.VT_PROBE_TIMEOUT) || 30 * 1000,
   },
 
   // ── API Routes ────────────────────────────────────────────────────
@@ -134,6 +163,7 @@ module.exports = {
     TIKTOK_CREATOR_TIMEOUT_MS: parseInt(process.env.API_CREATOR_TIMEOUT) || 22000,
     TIKTOK_DL_UP_TIMEOUT_MS:   parseInt(process.env.API_DLUP_TIMEOUT)    || 115000,
     TIKTOK_DL_BROWSER_TIMEOUT_MS: parseInt(process.env.API_DLBROWSER_TIMEOUT) || 85000,
+    TIKTOK_COMPILE_TIMEOUT_MS: parseInt(process.env.API_COMPILE_TIMEOUT) || 300000,
     // Max keywords per search request
     MAX_KEYWORDS_PER_SEARCH: parseInt(process.env.API_MAX_KEYWORDS) || 15,
   },

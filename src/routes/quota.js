@@ -1,5 +1,6 @@
 // Quota Management Routes — จัดการ YouTube API quota
 const express = require('express');
+const { requireAuthForDestructive } = require('../middleware/security');
 const router = express.Router();
 const quotaManager = require('../services/quota');
 const youtubeService = require('../services/youtube');
@@ -29,7 +30,7 @@ router.post('/estimate', (req, res) => {
 });
 
 // Set extended quota (admin only)
-router.post('/extend', (req, res) => {
+router.post('/extend', requireAuthForDestructive, (req, res) => {
   const { newLimit, confirm } = req.body;
   
   if (!confirm) {
@@ -51,7 +52,7 @@ router.post('/extend', (req, res) => {
 });
 
 // Force reset quota (emergency use only)
-router.post('/reset', (req, res) => {
+router.post('/reset', requireAuthForDestructive, (req, res) => {
   const { confirm } = req.body;
   
   if (!confirm) {

@@ -53,9 +53,39 @@ router.get('/ready', async (_req, res) => {
   try {
     const health = await healthService.getHealth();
     const ready  = health.overall !== 'critical';
+
+    // ★ Engine persistence evidence for deploy verification
+    const engine = require('../services/engine');
+    const store  = require('../utils/store');
+    const fs     = require('fs');
+    const dataDir = require('path').join(__dirname, '../../data');
+
+    let dataWritable = false;
+    try { fs.accessSync(dataDir, fs.constants.W_OK); dataWritable = true; } catch (_) {}
+
+    const accountsCount = (() => {
+      try {
+        const am = require('../utils/accounts');
+        return am.getAll ? am.getAll().length : 0;
+      } catch (_) { return 0; }
+    })();
+
+    const uploadsCount = store.uploads.loadRef().length;
+    const lastWrite = (() => {
+      try { return fs.statSync(require('path').join(dataDir, 'engine_state.json')).mtime.toISOString(); }
+      catch (_) { return null; }
+    })();
+
     res.status(ready ? 200 : 503).json({
       status:  ready ? 'ready' : 'not_ready',
       overall: health.overall,
+      engine:  engine.getStatus().phase,
+      persistence: {
+        dataWritable,
+        accountsWithToken: accountsCount,
+        uploadsCount,
+        lastDataWrite: lastWrite,
+      },
     });
   } catch (err) {
     res.status(503).json({ status: 'error', error: err.message });
@@ -93,10 +123,69 @@ router.post('/duplicate-check', async (req, res) => {
 // ── Cleanup ───────────────────────────────────────────────────────
 
 router.post('/cleanup', (req, res) => {
-  const queueResult = healthService.cleanupQueue();
-  const tempResult  = healthService.cleanupTempFiles();
-  logger.info('Manual cleanup performed');
-  res.json({ success: true, queue: queueResult, tempFiles: tempResult });
+  const deep = req.query.deep === '1' || req.body?.deep === true;
+  const result = deep
+    ? healthService.deepCleanup()
+    : { queue: healthService.cleanupQueue(), temp: healthService.cleanupTempFiles() };
+  logger.info('Manual cleanup performed', { deep });
+  res.json({ success: true, deep, ...result });
+});
+
+// ── ★ Metrics — จุดเดียวเห็นสุขภาพระบบทั้งหมด ─────────────────────
+/**
+ * GET /api/health/metrics
+ * รวม: circuit breaker, queue, ffmpeg, disk, store writes, event bus, scheduler loop
+ * ใช้ debug ปัญหาแบบ "ระบบช้า/ค้าง/ไม่ทำงาน" ได้ในคำขอเดียว
+ */
+router.get('/metrics', async (req, res) => {
+  const safe = (fn, fallback = null) => { try { return fn(); } catch (_) { return fallback; } };
+
+  const uploadQueue    = require('../services/queue');
+  const videoTransform = require('../services/videoTransform');
+  const scheduler      = require('../services/scheduler');
+  const resilience     = require('../utils/resilience');
+  const diskGuard      = require('../utils/diskGuard');
+  const store          = require('../utils/store');
+  const orchestrator   = require('../services/orchestrator');
+
+  res.json({
+    timestamp: new Date().toISOString(),
+    process: {
+      pid:      process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      nodeVersion:   process.version,
+      memory:   safe(() => {
+        const m = process.memoryUsage();
+        return {
+          rssBytes: m.rss, heapUsedBytes: m.heapUsed, heapTotalBytes: m.heapTotal,
+          externalBytes: m.external,
+        };
+      }),
+      activeHandles: safe(() => process._getActiveHandles?.().length ?? null),
+      activeRequests: safe(() => process._getActiveRequests?.().length ?? null),
+    },
+    // ★ circuit breaker — บอกได้ทันทีว่า YouTube/tikwm ล่มอยู่ไหม
+    circuits: safe(() => resilience.allBreakers(), []),
+    queue:    safe(() => {
+      const s = uploadQueue.getStatus({ maxItems: 0 });
+      delete s.items;
+      return s;
+    }),
+    ffmpeg: safe(() => ({ running: videoTransform.getRunning(), stats: videoTransform.getStats() })),
+    scheduler: safe(() => ({ config: scheduler.getConfig(), loop: scheduler.getLoopState() })),
+    disk:  safe(() => diskGuard.getDiskInfo()),
+    // ★ store write metrics — ตรวจว่ามี write ค้างในคิวไหม (pending > 0 นานๆ = ดิสก์มีปัญหา)
+    stores: safe(() => store.allMetrics(), []),
+    eventBus: safe(() => ({ recentEvents: orchestrator.getEventHistory(10) })),
+  });
+});
+
+// ── ★ POST /circuits/reset — ปลด circuit ที่เปิดอยู่ด้วยมือ ────────
+router.post('/circuits/reset', (req, res) => {
+  const resilience = require('../utils/resilience');
+  const count = resilience.resetAllBreakers();
+  logger.info('[Health] ผู้ใช้สั่ง reset circuit breakers', { count });
+  res.json({ success: true, reset: count, circuits: resilience.allBreakers() });
 });
 
 // ── Logs ──────────────────────────────────────────────────────────

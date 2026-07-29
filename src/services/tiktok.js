@@ -5,6 +5,13 @@ const https  = require('https');
 const http   = require('http');
 const logger = require('../utils/logger');
 const C      = require('../config/constants');
+const diskGuard = require('../utils/diskGuard');
+const { breaker } = require('../utils/resilience');
+
+// ★ เพดานความปลอดภัยของ network layer
+const MAX_REDIRECTS  = 5;
+const MAX_JSON_BYTES = 8 * 1024 * 1024;    // response JSON ที่ใหญ่กว่านี้ = ผิดปกติ
+const MAX_HTML_BYTES = 4 * 1024 * 1024;    // อ่าน HTML แค่พอ parse meta tag
 
 const DOWNLOAD_DIR = path.join(__dirname, '../../downloads/tiktok');
 if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
@@ -118,27 +125,56 @@ class TikTokService {
    * attempt, bail immediately instead of wasting 3 retry rounds.
    */
   async _fetchTikwmWithRetry(url, maxRetries = 3) {
+    // ★ Circuit breaker — เดิมเวลา tikwm ถูก Cloudflare บล็อก ทุก keyword
+    //   ยังยิงคำขอเต็มรอบ (search 15 keyword = 15 × throttle 1.1s = เสียเวลาเปล่า 17s)
+    //   ตอนนี้: ล้มติดกันครบเกณฑ์ → ตัดทันที แล้วลองใหม่อีก 2 นาที
+    const cb = breaker('tikwm', { failureThreshold: 6, openMs: 2 * 60_000 });
+
+    if (cb.state === 'open') {
+      const waitSec = Math.ceil((cb.openMs - (Date.now() - cb.openedAt)) / 1000);
+      logger.warn('[tikwm] circuit เปิดอยู่ — ข้ามคำขอ', { retryInSec: waitSec });
+      return null;
+    }
+
+    let lastFailure = null;
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const response = await this._throttleTikwm(() => this._fetchJSON(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-          'Referer': 'https://www.tiktok.com/'
-        }
-      }));
+      let response;
+      try {
+        response = await this._throttleTikwm(() => this._fetchJSON(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Referer': 'https://www.tiktok.com/'
+          }
+        }));
+      } catch (err) {
+        // network error / timeout — นับเป็นความล้มเหลวของ upstream
+        lastFailure = err;
+        logger.warn('[tikwm] คำขอล้มเหลว', { attempt: attempt + 1, error: err.message });
+        if (attempt < maxRetries) { await this._delay(1200 * (attempt + 1)); continue; }
+        break;
+      }
 
       // null = HTML response (CF challenge) or parse error — no point retrying
       if (response === null) {
         logger.warn('tikwm returned non-JSON (CF block?), skipping retries', { url: url.substring(0, 80) });
+        cb._onFailure(new Error('tikwm ตอบไม่ใช่ JSON (อาจถูก Cloudflare บล็อก)'));
         return null;
       }
 
       const isRateLimited = response.code === -1;
-      if (!isRateLimited) return response;
+      if (!isRateLimited) {
+        cb._onSuccess();
+        return response;
+      }
 
+      lastFailure = new Error('tikwm rate limit');
       logger.warn('tikwm rate limit hit, retrying', { attempt: attempt + 1, url: url.substring(0, 80) });
       await this._delay(1200 * (attempt + 1));
     }
+
+    cb._onFailure(lastFailure || new Error('tikwm ไม่ตอบสนองหลังลองครบจำนวน'));
     return null;
   }
 
@@ -608,12 +644,48 @@ class TikTokService {
    * Download file from URL
    */
   _downloadFile(url, filepath, redirectDepth = 0) {
-    if (redirectDepth > 5) {
-      return Promise.reject(new Error('Too many redirects (max 5)'));
+    if (redirectDepth > MAX_REDIRECTS) {
+      return Promise.reject(new Error(`redirect วนเกิน ${MAX_REDIRECTS} ครั้ง`));
     }
+
+    // ★ เช็คพื้นที่ดิสก์ก่อนเริ่มโหลด — เดิมโหลดจนดิสก์เต็มแล้วไฟล์เสีย
+    const space = diskGuard.check(C.TIKTOK.MAX_DOWNLOAD_BYTES, { label: 'ดาวน์โหลด TikTok' });
+    if (!space.ok) {
+      return Promise.reject(Object.assign(
+        new Error(`พื้นที่ดิสก์ไม่พอ — ${space.reason}`), { code: 'ENOSPC_GUARD' }
+      ));
+    }
+
     return new Promise((resolve, reject) => {
       const protocol = url.startsWith('https') ? https : http;
       const file = fs.createWriteStream(filepath);
+
+      let settled = false;
+      let bytesWritten = 0;
+
+      const cleanup = () => {
+        try { file.destroy(); } catch (_) {}
+        try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
+      };
+      const fail = (err) => {
+        if (settled) return; settled = true;
+        clearTimeout(hardTimer);
+        cleanup();
+        reject(err);
+      };
+      const succeed = () => {
+        if (settled) return; settled = true;
+        clearTimeout(hardTimer);
+        resolve();
+      };
+
+      // ★ total-duration timeout — request.setTimeout เป็น inactivity เท่านั้น
+      //   server ที่ส่งข้อมูลทีละหยดจะไม่ trigger เลย = ค้างตลอดกาล
+      const hardTimer = setTimeout(() => {
+        try { request.destroy(); } catch (_) {}
+        fail(new Error(`ดาวน์โหลดใช้เวลาเกิน ${C.TIKTOK.DOWNLOAD_TOTAL_TIMEOUT_MS / 1000}s — ยกเลิก`));
+      }, C.TIKTOK.DOWNLOAD_TOTAL_TIMEOUT_MS);
+      if (hardTimer.unref) hardTimer.unref();
 
       const request = protocol.get(url, {
         headers: {
@@ -623,39 +695,62 @@ class TikTokService {
       }, (response) => {
         // Handle redirects
         if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          try { file.close(); } catch (_) {}
+          response.resume();
+          try { file.destroy(); } catch (_) {}
           try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
-          return this._downloadFile(response.headers.location, filepath, redirectDepth + 1).then(resolve).catch(reject);
+          if (settled) return; settled = true;
+          clearTimeout(hardTimer);
+          const next = new URL(response.headers.location, url).toString();
+          return this._downloadFile(next, filepath, redirectDepth + 1).then(resolve, reject);
         }
 
         if (response.statusCode !== 200) {
-          try { file.close(); } catch (_) {}
-          try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
-          return reject(new Error(`HTTP ${response.statusCode}`));
+          response.resume();
+          return fail(new Error(`HTTP ${response.statusCode}`));
         }
 
+        // ★ ปฏิเสธไฟล์ใหญ่เกินก่อนโหลด (ถ้า server บอก content-length)
+        const declared = parseInt(response.headers['content-length'] || '0', 10);
+        if (declared > C.TIKTOK.MAX_DOWNLOAD_BYTES) {
+          response.resume();
+          return fail(new Error(`ไฟล์ใหญ่เกินกำหนด (${Math.round(declared / 1048576)}MB)`));
+        }
+
+        response.on('data', (chunk) => {
+          bytesWritten += chunk.length;
+          // ★ กันกรณี server ไม่บอก content-length แล้วส่งไม่จบ
+          if (bytesWritten > C.TIKTOK.MAX_DOWNLOAD_BYTES) {
+            try { request.destroy(); } catch (_) {}
+            fail(new Error('ไฟล์ใหญ่เกินกำหนดระหว่างดาวน์โหลด'));
+          }
+        });
+
+        response.on('error', (err) => fail(new Error(`อ่านข้อมูลไม่สำเร็จ: ${err.message}`)));
+
         response.pipe(file);
+
         file.on('finish', () => {
-          file.close(resolve);
+          file.close(() => {
+            // ★ ตรวจว่าไฟล์ไม่ว่าง — เดิมไฟล์ 0 byte ผ่านไปถึงขั้น upload
+            try {
+              const size = fs.statSync(filepath).size;
+              if (size === 0) return fail(new Error('ไฟล์ที่ดาวน์โหลดว่างเปล่า'));
+              if (size < 1024) return fail(new Error(`ไฟล์เล็กผิดปกติ (${size} bytes) — อาจเป็นหน้า error`));
+            } catch (err) {
+              return fail(new Error(`ตรวจไฟล์ไม่สำเร็จ: ${err.message}`));
+            }
+            succeed();
+          });
         });
-        // ★ Handle disk I/O errors — ป้องกัน silent hang และ partial file
-        file.on('error', (err) => {
-          try { file.close(); } catch (_) {}
-          try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
-          reject(new Error(`Disk write error: ${err.message}`));
-        });
+
+        file.on('error', (err) => fail(new Error(`เขียนดิสก์ไม่สำเร็จ: ${err.message}`)));
       });
 
-      request.on('error', (err) => {
-        try { file.close(); } catch (_) {}
-        try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
-        reject(err);
-      });
+      request.on('error', (err) => fail(err));
 
       request.setTimeout(C.TIKTOK.DOWNLOAD_TIMEOUT_MS, () => {
-        request.destroy();
-        try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch (_) {}
-        reject(new Error('Download timeout'));
+        try { request.destroy(); } catch (_) {}
+        fail(new Error('ดาวน์โหลดไม่มีการตอบสนอง (timeout)'));
       });
     });
   }
@@ -663,44 +758,76 @@ class TikTokService {
   /**
    * Fetch JSON from URL
    */
-  _fetchJSON(url, options = {}) {
+  _fetchJSON(url, options = {}, redirectDepth = 0) {
+    // ★ เดิม redirect วนซ้ำแบบไม่จำกัด → redirect loop = infinite recursion + hang ตลอดกาล
+    if (redirectDepth > MAX_REDIRECTS) {
+      return Promise.reject(new Error(`redirect วนเกิน ${MAX_REDIRECTS} ครั้ง — ยกเลิก`));
+    }
+
     return new Promise((resolve, reject) => {
-      const urlObj = new URL(url);
+      let urlObj;
+      try { urlObj = new URL(url); } catch (_) { return reject(new Error(`URL ไม่ถูกต้อง: ${String(url).slice(0, 80)}`)); }
+      if (!['http:', 'https:'].includes(urlObj.protocol)) {
+        return reject(new Error(`protocol ไม่รองรับ: ${urlObj.protocol}`));
+      }
       const protocol = urlObj.protocol === 'https:' ? https : http;
 
       const reqOptions = {
         hostname: urlObj.hostname,
-        path: urlObj.pathname + urlObj.search,
-        method: options.method || 'GET',
-        headers: options.headers || {}
+        port:     urlObj.port || undefined,
+        path:     urlObj.pathname + urlObj.search,
+        method:   options.method || 'GET',
+        headers:  options.headers || {},
       };
 
-      const req = protocol.request(reqOptions, (res) => {
-        let data = '';
+      let settled = false;
+      const done = (fn, arg) => { if (!settled) { settled = true; clearTimeout(hardTimer); fn(arg); } };
 
+      // ★ total-duration timeout — setTimeout ของ request เป็น inactivity timeout
+      //   ตอบทีละ byte ช้าๆ จะไม่โดน trigger เลย
+      const hardTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { req.destroy(); } catch (_) {}
+        reject(new Error(`คำขอใช้เวลาเกิน ${C.TIKTOK.JSON_TOTAL_TIMEOUT_MS / 1000}s`));
+      }, C.TIKTOK.JSON_TOTAL_TIMEOUT_MS);
+      if (hardTimer.unref) hardTimer.unref();
+
+      const req = protocol.request(reqOptions, (res) => {
         // Handle redirects
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return this._fetchJSON(res.headers.location, options).then(resolve).catch(reject);
+          res.resume(); // ★ ต้อง drain ไม่งั้น socket ค้าง
+          const next = new URL(res.headers.location, urlObj).toString();
+          clearTimeout(hardTimer);
+          settled = true;
+          return this._fetchJSON(next, options, redirectDepth + 1).then(resolve, reject);
         }
 
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch (e) {
-            resolve(null);
+        let data = '';
+        let bytes = 0;
+        res.on('data', chunk => {
+          bytes += chunk.length;
+          // ★ จำกัดขนาด response — กัน endpoint ที่ตอบไม่จบทำ memory ระเบิด
+          if (bytes > MAX_JSON_BYTES) {
+            try { req.destroy(); } catch (_) {}
+            return done(reject, new Error('ข้อมูลตอบกลับใหญ่เกินกำหนด'));
           }
+          data += chunk;
         });
+        res.on('end', () => {
+          try { done(resolve, JSON.parse(data)); }
+          catch (_) { done(resolve, null); }
+        });
+        res.on('error', (err) => done(reject, err));
       });
 
-      req.on('error', reject);
-      req.setTimeout(8000, () => {        req.destroy();
-        reject(new Error('Request timeout'));
+      req.on('error', (err) => done(reject, err));
+      req.setTimeout(C.TIKTOK.JSON_IDLE_TIMEOUT_MS, () => {
+        try { req.destroy(); } catch (_) {}
+        done(reject, new Error('คำขอไม่มีการตอบสนอง (timeout)'));
       });
 
-      if (options.body) {
-        req.write(options.body);
-      }
+      if (options.body) req.write(options.body);
       req.end();
     });
   }
@@ -708,38 +835,64 @@ class TikTokService {
   /**
    * Fetch text/HTML from URL
    */
-  _fetchText(url, options = {}) {
-    return new Promise((resolve, reject) => {
-      const urlObj = new URL(url);
+  _fetchText(url, options = {}, redirectDepth = 0) {
+    // ★ redirect depth limit เหมือน _fetchJSON — ตัวนี้คืน null แทน reject ตามพฤติกรรมเดิม
+    if (redirectDepth > MAX_REDIRECTS) return Promise.resolve(null);
+
+    return new Promise((resolve) => {
+      let urlObj;
+      try { urlObj = new URL(url); } catch (_) { return resolve(null); }
+      if (!['http:', 'https:'].includes(urlObj.protocol)) return resolve(null);
       const protocol = urlObj.protocol === 'https:' ? https : http;
 
       const reqOptions = {
         hostname: urlObj.hostname,
-        path: urlObj.pathname + urlObj.search,
-        method: options.method || 'GET',
-        headers: options.headers || {}
+        port:     urlObj.port || undefined,
+        path:     urlObj.pathname + urlObj.search,
+        method:   options.method || 'GET',
+        headers:  options.headers || {},
       };
 
-      const req = protocol.request(reqOptions, (res) => {
-        let data = '';
+      let settled = false;
+      const done = (val) => { if (!settled) { settled = true; clearTimeout(hardTimer); resolve(val); } };
 
+      const hardTimer = setTimeout(() => {
+        if (settled) return;
+        try { req.destroy(); } catch (_) {}
+        done(null);
+      }, C.TIKTOK.TEXT_TOTAL_TIMEOUT_MS);
+      if (hardTimer.unref) hardTimer.unref();
+
+      const req = protocol.request(reqOptions, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return this._fetchText(res.headers.location, options).then(resolve).catch(reject);
+          res.resume();
+          const next = new URL(res.headers.location, urlObj).toString();
+          clearTimeout(hardTimer);
+          settled = true;
+          return this._fetchText(next, options, redirectDepth + 1).then(resolve, () => resolve(null));
         }
 
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => resolve(data));
+        let data = '';
+        let bytes = 0;
+        res.on('data', chunk => {
+          bytes += chunk.length;
+          if (bytes > MAX_HTML_BYTES) {
+            try { req.destroy(); } catch (_) {}
+            return done(data);   // ตัดแค่ที่ได้มา — พอสำหรับ parse meta tag
+          }
+          data += chunk;
+        });
+        res.on('end', () => done(data));
+        res.on('error', () => done(null));
       });
 
-      req.on('error', () => resolve(null));
-      req.setTimeout(15000, () => {
-        req.destroy();
-        resolve(null);
+      req.on('error', () => done(null));
+      req.setTimeout(C.TIKTOK.TEXT_IDLE_TIMEOUT_MS, () => {
+        try { req.destroy(); } catch (_) {}
+        done(null);
       });
 
-      if (options.body) {
-        req.write(options.body);
-      }
+      if (options.body) req.write(options.body);
       req.end();
     });
   }
