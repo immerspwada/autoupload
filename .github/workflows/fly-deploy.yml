@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════
+# Auto-deploy to Fly.io on push to main
+#
+# ★ ต้องตั้ง GitHub Secret ก่อนใช้งาน:
+#   Settings → Secrets and variables → Actions → New repository secret
+#   Name:  FLY_API_TOKEN
+#   Value: (ได้จากคำสั่ง `fly tokens create deploy -a autoupload`)
+# ═══════════════════════════════════════════════════════════════
+name: Deploy to Fly.io
+
+on:
+  push:
+    branches:
+      - main
+    # ข้าม deploy ถ้าแก้แค่ไฟล์เอกสาร/spec (ประหยัดเวลา build)
+    paths-ignore:
+      - '**.md'
+      - '.kiro/**'
+      - '.kilo/**'
+      - '.superpowers/**'
+      - '.vscode/**'
+  # เปิดให้กด deploy ด้วยมือจากหน้า Actions ได้
+  workflow_dispatch:
+
+# กัน deploy ซ้อนกัน — ถ้า push ใหม่มาระหว่าง deploy ให้ยกเลิกตัวเก่า
+concurrency:
+  group: fly-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy app
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only --app autoupload
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      # ★ ตรวจว่า deploy แล้วระบบยังทำงานจริง (ไม่ใช่แค่ build ผ่าน)
+      - name: Verify health
+        run: |
+          echo "รอให้ machine พร้อม..."
+          for i in $(seq 1 12); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" https://autoupload.fly.dev/api/health/live || echo "000")
+            if [ "$CODE" = "200" ]; then
+              echo "✅ Health check ผ่าน (HTTP $CODE)"
+              exit 0
+            fi
+            echo "  ครั้งที่ $i: HTTP $CODE — รออีก 10 วินาที"
+            sleep 10
+          done
+          echo "❌ Health check ไม่ผ่านหลังรอ 2 นาที"
+          exit 1
+
+      # ★ รายงานสถานะ Engine หลัง deploy (ยืนยันว่า state คงอยู่ข้าม deploy)
+      - name: Report engine state
+        if: success()
+        run: |
+          echo "── Engine state หลัง deploy ──"
+          curl -s https://autoupload.fly.dev/api/engine/status | head -c 500
+          echo
