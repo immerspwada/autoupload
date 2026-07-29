@@ -1,11 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 # Fly.io Configuration — YouTube Auto Uploader (24/7 Autonomous)
 # ═══════════════════════════════════════════════════════════════
-# Deploy: fly deploy
-# Logs:   fly logs
-# SSH:    fly ssh console
-# ═══════════════════════════════════════════════════════════════
-
 app = "autoupload"
 primary_region = "sin"
 
@@ -37,26 +32,11 @@ primary_region = "sin"
   timeout = "5s"
   path = "/api/health/live"
 
-[[http_service.checks]]
-  grace_period = "60s"
-  interval = "60s"
-  method = "GET"
-  timeout = "10s"
-  path = "/api/health/ready"
-
 [[vm]]
   size = "shared-cpu-1x"
   memory = "1024mb"
   cpus = 1
 
-[[mounts]]
+[mounts]
   source = "autoupload_data"
-  destination = "/app/data"
-
-[[mounts]]
-  source = "autoupload_downloads"
-  destination = "/app/downloads"
-
-[[mounts]]
-  source = "autoupload_logs"
-  destination = "/app/logs"
+  destination = "/app/persist"
