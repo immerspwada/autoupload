@@ -43,6 +43,20 @@ router.post('/stop', requireAuthForDestructive, async (req, res) => {
   }
 });
 
+// ─── POST /kick — สั่งเริ่มรอบใหม่ทันที (ข้าม backoff/degraded) ────
+// ใช้เมื่อ Engine ติด degraded แล้วเราแก้ต้นเหตุเรียบร้อยแล้ว
+// ไม่ต้องรอ backoff 30 นาที
+router.post('/kick', requireAuthForDestructive, async (req, res) => {
+  try {
+    const status = await engine.kick();
+    logger.info('[Engine API] Kick requested', { ip: req.ip });
+    res.json({ success: true, status });
+  } catch (err) {
+    logger.error('[Engine API] Kick error', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── POST /pause ─────────────────────────────────────────────────
 router.post('/pause', requireAuthForDestructive, async (req, res) => {
   try {
